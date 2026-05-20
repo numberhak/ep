@@ -1361,7 +1361,8 @@ export default function App() {
   return (
     <ToastProvider>
       <AppContext.Provider value={contextValue}>
-        <div className="flex h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 overflow-hidden selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
+        {/* ── 데스크탑 레이아웃 (md 이상) ── */}
+        <div className="hidden md:flex h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 overflow-hidden selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
           <aside className="w-60 bg-slate-900 flex flex-col z-20 shrink-0 border-r border-slate-800">
             <div className="p-6">
               <div className="flex items-center gap-3 text-white mb-1">
@@ -1424,6 +1425,56 @@ export default function App() {
               {activePage === 'tasks'    && <TasksPage />}
             </div>
           </main>
+        </div>
+
+        {/* ── 모바일 레이아웃 (md 미만) ── */}
+        <div className="flex md:hidden flex-col h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
+          {/* 상단 헤더 */}
+          <header className="bg-slate-900 px-4 py-3 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2 text-white">
+              <div className="p-1 bg-indigo-500 rounded-lg"><IconCalendar /></div>
+              <span className="text-base font-black tracking-tight">에듀플래너</span>
+              <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`}></span>
+            </div>
+            <button
+              aria-label="프로필 설정 수정"
+              onClick={() => setIsProfileModalOpen(true)}
+              className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-sm uppercase focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+            >
+              {profileState.name.charAt(0) || 'U'}
+            </button>
+          </header>
+
+          {/* 메인 콘텐츠 */}
+          <main className="flex-1 overflow-hidden relative bg-white dark:bg-slate-900 min-w-0">
+            {activePage === 'plan'     && <LessonPlanPage />}
+            {activePage === 'settings' && <SettingsPage />}
+            {activePage === 'manage'   && <ManagePage />}
+            {activePage === 'records'  && <RecordsPage />}
+            {activePage === 'tasks'    && <TasksPage />}
+          </main>
+
+          {/* 하단 탭 바 */}
+          <nav className="bg-slate-900 border-t border-slate-800 shrink-0 flex">
+            {menuOrderState.map((itemId) => {
+              const item = NAV_ITEMS_CONFIG[itemId];
+              if (!item) return null;
+              const isActive = activePage === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => { setActivePage(item.id as any); setPageParams(null); }}
+                  className={`flex-1 flex flex-col items-center justify-center py-2 gap-1 transition-colors focus:outline-none ${isActive ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  <div className={`transition-transform ${isActive ? 'scale-110' : ''}`}>
+                    {item.icon}
+                  </div>
+                  <span className="text-[9px] font-bold leading-none">{item.label}</span>
+                  {isActive && <span className="w-1 h-1 rounded-full bg-indigo-400"></span>}
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
         {isProfileModalOpen && (
