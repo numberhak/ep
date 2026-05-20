@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, createContext, useContext } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, User } from 'firebase/auth';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import type { User } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
 // ==========================================
@@ -15,6 +16,16 @@ const auth = app ? getAuth(app) : null;
 const db = app ? getFirestore(app) : null;
 // @ts-ignore
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// 로컬 환경(Vite)이나 Vercel 배포 시 실제 환경 변수를 사용할 경우, 아래 코드로 교체하세요.
+// const firebaseConfig = {
+//   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
+//   authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+//   projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
+//   storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+//   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+//   appId:             import.meta.env.VITE_FIREBASE_APP_ID,
+// };
 
 // ==========================================
 // Local Storage Helper
@@ -37,7 +48,7 @@ export interface Lesson { id: string; order: number; title: string; memo: string
 export interface WeeklySlot { dayOfWeek: number; period: number; }
 export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan';
 export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; classScore?: number; groupScores?: number[]; }
-export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; } // isHoliday: false면 수업 안 밀리는 공통 일정
+export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; }
 export interface ClassEvent { id: string; classId: string; date: string; period: number; title: string; type: 'exception' | 'extra'; }
 export interface ClassRecord { id: string; classId: string; date: string; content: string; }
 export interface UserProfile { name: string; subject: string; }
@@ -98,8 +109,8 @@ function generateClassLessonSchedule(
   viewEndDateStr: string
 ): ScheduledItem[] {
   const sortedLessons = [...lessons].sort((a, b) => a.order - b.order);
-  // isHoliday가 false인 단순 일정은 휴일 셋에서 제외 (수업이 밀리지 않음)
-  const holidaySet = new Set(holidays.filter(h => h.isHoliday !== false).map(h => h.date));
+  // [수정] 단순 일정이든 휴일이든 해당 요일의 수업은 밀리도록 전체 날짜를 Set으로 구성합니다.
+  const holidaySet = new Set(holidays.map(h => h.date));
 
   const classEvents = events.filter(e => e.classId === schedule.classId);
   const eventMap = new Map<string, ClassEvent>();
@@ -435,7 +446,7 @@ function TasksPage() {
       <header className="p-4 md:p-8 shrink-0 flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 z-10 sticky top-0 shadow-sm">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">업무 체크리스트</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">마감일(D-Day)을 설정하면 주간 진도표 상단에 크게 표시됩니다.</p>
+          <p className="text-gray-500 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">마감일(D-Day)을 설정하면 주간 진도표 화면 상단에 자동으로 표시됩니다.</p>
         </div>
       </header>
       <div className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col md:flex-row gap-6 items-start">
@@ -672,11 +683,6 @@ function ManagePage() {
   const daysInWeek = Array.from({ length: 5 }, (_, i) => dateUtils.addDays(currentWeekStart, i));
   const weekEndDateStr = dateUtils.formatDate(dateUtils.addDays(currentWeekStart, 4));
 
-  const getMockLunchMenu = (dayOfWeek: number) => {
-    const menus = ['', '기장밥\n쇠고기미역국\n안동찜닭\n계란말이\n김치', '보리밥\n동태찌개\n돈육강정\n참나물\n깍두기', '오므라이스\n수제마늘빵\n요구르트\n단무지\n김치', '흑미밥\n청국장\n오리불고기\n무쌈\n김치', '잡곡밥\n닭곰탕\n고등어구이\n진미채\n깍두기', ''];
-    return menus[dayOfWeek];
-  };
-
   const schedulesToRender = useMemo(() => {
     const targetClasses = selectedClassId === 'all' ? classes : classes.filter(c => c.classId === selectedClassId);
     const allItems: { item: ScheduledItem; classInfo: ClassSchedule }[] = [];
@@ -739,22 +745,25 @@ function ManagePage() {
               const dateStr = dateUtils.formatDate(date);
               const dayHolidays = holidays.filter(h => h.date === dateStr && h.isHoliday !== false);
               const dayEvents = holidays.filter(h => h.date === dateStr && h.isHoliday === false);
-              const isHoliday = dayHolidays.length > 0;
+              const isHolidayDay = dayHolidays.length > 0;
               const dayTasks = tasks.filter(t => t.date === dateStr && !t.completed);
 
               return (
-                <div key={i} className={`p-2 flex flex-col items-center border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHoliday ? 'bg-rose-50/80 dark:bg-rose-900/20' : ''}`}>
+                <div key={i} className={`p-2 flex flex-col items-center border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHolidayDay ? 'bg-rose-50/80 dark:bg-rose-900/20' : ''}`}>
                   <div className="text-xs font-bold text-slate-500 dark:text-slate-400">{dayNames[i]}</div>
-                  <div className={`text-xl font-black ${isHoliday ? 'text-rose-500' : 'text-slate-800 dark:text-slate-200'}`}>{date.getDate()}</div>
+                  <div className={`text-xl font-black ${isHolidayDay ? 'text-rose-500' : 'text-slate-800 dark:text-slate-200'}`}>{date.getDate()}</div>
                   {dayHolidays.map(h => <div key={h.id} className="text-[10px] font-bold text-rose-500 uppercase mt-0.5 text-center">{h.title}</div>)}
                   {dayEvents.map(e => <div key={e.id} className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase mt-1 text-center bg-blue-50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded-md">{e.title}</div>)}
+                  
+                  {/* 업무 D-Day 표시 크기 확대 */}
                   <div className="mt-1.5 flex flex-col gap-1 w-full px-1">
                     {dayTasks.map(t => {
                       const dday = dateUtils.getDDay(t.date!);
                       const ddayText = dday === 0 ? 'D-Day' : dday > 0 ? `D-${dday}` : `D+${Math.abs(dday)}`;
                       return (
-                        <div key={t.id} title={t.title} className="text-xs font-black text-indigo-700 dark:text-indigo-200 bg-indigo-100 dark:bg-indigo-900/50 px-2 py-1.5 rounded-lg truncate border border-indigo-200 dark:border-indigo-700 w-full text-center shadow-sm">
-                          <span className="text-indigo-500 dark:text-indigo-400 mr-1">{ddayText}</span>{t.title}
+                        <div key={t.id} title={t.title} className="flex items-center gap-1.5 text-xs font-medium text-indigo-800 dark:text-indigo-100 bg-indigo-100 dark:bg-indigo-900/60 px-2 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-700/80 w-full shadow-sm overflow-hidden">
+                          <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 shrink-0">{ddayText}</span>
+                          <span className="truncate flex-1 text-left font-bold">{t.title}</span>
                         </div>
                       );
                     })}
@@ -773,13 +782,13 @@ function ManagePage() {
                   const dateStr = dateUtils.formatDate(date);
                   const isHoliday = holidays.some(h => h.date === dateStr && h.isHoliday !== false);
                   
-                  // [수정1] 예외(휴강) 일정은 화면에 렌더링하지 않음 (완전 삭제처럼 보임)
+                  // [수정1] 결강(exception)된 수업은 아예 렌더링하지 않음 (완전 비워짐)
                   const cellItems = (scheduleMap.get(`${dateStr}-${period}`) || []).filter(data => {
                     if (data.item.type === 'event' && data.item.event?.type === 'exception') return false;
                     return true;
                   });
 
-                  // [수정2] 선택된 학급의 시간표에 포함되는지 확인하여 음영 처리 결정
+                  // [수정3] 비해당 시간표 회색 음영 처리 (휴일이 아니고 해당 학급 정규수업이 아닌 경우)
                   let isTargetSlot = false;
                   if (selectedClassId !== 'all') {
                     isTargetSlot = classes.find(c => c.classId === selectedClassId)?.weeklySlots.some(s => s.dayOfWeek === date.getDay() && s.period === period) || false;
@@ -787,7 +796,7 @@ function ManagePage() {
                     isTargetSlot = classes.some(c => c.weeklySlots.some(s => s.dayOfWeek === date.getDay() && s.period === period));
                   }
                   
-                  const shadingClass = !isTargetSlot && !isHoliday ? 'bg-gray-200/50 dark:bg-gray-800/60 opacity-50' : '';
+                  const shadingClass = !isTargetSlot && !isHoliday ? 'bg-gray-100/80 dark:bg-slate-800/40 opacity-70' : '';
 
                   return (
                     <div key={dateStr} className={`p-2 border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHoliday ? 'bg-rose-50/80 dark:bg-rose-900/20' : shadingClass} flex flex-col gap-1.5`}>
@@ -800,10 +809,10 @@ function ManagePage() {
                             return (
                               <button key={idx} aria-label={`${data.classInfo.className} ${data.item.lesson?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left p-2.5 rounded-lg shadow-sm transition-all text-xs group focus:outline-none ${style.ring} focus-visible:ring-offset-1 ${style.bg} ${isSelected ? `border-l-[6px] ${style.leftBorder} border-y-transparent border-r-transparent shadow-md` : `border ${style.border} ${style.hover}`}`}>
                                 <div className="flex justify-between items-start mb-1.5">
-                                  <span className={`font-black ${style.text} opacity-90`}>
+                                  <span className={`font-black ${style.text} opacity-90 flex items-center`}>
                                     {data.classInfo.className} 
-                                    {/* [수정3] 학급 점수 표시 추가 */}
-                                    <span className="ml-1 text-[10px] font-bold opacity-70">({data.classInfo.classScore || 0}점)</span>
+                                    {/* [수정4] 학급 점수 표시 추가 */}
+                                    <span className="ml-1 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
                                   </span>
                                   <span className="text-[10px] bg-white/60 dark:bg-black/20 px-1.5 py-0.5 rounded font-bold dark:text-white/80">{data.item.lesson?.order}차시</span>
                                 </div>
@@ -812,10 +821,13 @@ function ManagePage() {
                             );
                           } else {
                             return (
-                              <button key={idx} aria-label={`${data.classInfo.className} 예외 일정: ${data.item.event?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left bg-orange-50/80 dark:bg-orange-900/30 p-2.5 rounded-lg text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-1 ${isSelected ? 'border-l-[6px] border-l-orange-500 border-y-transparent border-r-transparent shadow-md' : 'border border-orange-200 dark:border-orange-800/60 hover:bg-orange-100 dark:hover:bg-orange-900/50 hover:border-orange-400 dark:hover:border-orange-600'}`}>
+                              <button key={idx} aria-label={`${data.classInfo.className} 보강 일정: ${data.item.event?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left bg-indigo-50/80 dark:bg-indigo-900/30 p-2.5 rounded-lg text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${isSelected ? 'border-l-[6px] border-l-indigo-500 border-y-transparent border-r-transparent shadow-md' : 'border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 hover:border-indigo-400 dark:hover:border-indigo-600'}`}>
                                 <div className="flex justify-between items-start mb-1.5">
-                                  <span className="font-black text-orange-700 dark:text-orange-400 opacity-90">{data.classInfo.className}</span>
-                                  <span className="text-[10px] bg-orange-100 dark:bg-orange-900/50 px-1.5 py-0.5 rounded text-orange-600 dark:text-orange-300 font-bold">{data.item.event?.type === 'extra' ? '보강' : '예외'}</span>
+                                  <span className="font-black text-indigo-700 dark:text-indigo-400 opacity-90 flex items-center">
+                                    {data.classInfo.className}
+                                    <span className="ml-1 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
+                                  </span>
+                                  <span className="text-[10px] bg-indigo-100 dark:bg-indigo-900/50 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-300 font-bold">보강</span>
                                 </div>
                                 <div className="font-bold text-gray-800 dark:text-gray-100 leading-snug truncate text-sm">{data.item.event?.title}</div>
                               </button>
@@ -828,28 +840,6 @@ function ManagePage() {
                 })}
               </div>
             ))}
-
-            {/* Lunch Row */}
-            <div className="grid grid-cols-[60px_repeat(5,minmax(0,1fr))] min-h-[120px] bg-emerald-50/30 dark:bg-emerald-900/10 border-t-2 border-emerald-100 dark:border-emerald-800/50">
-              <div className="flex flex-col items-center justify-center border-r border-gray-200 dark:border-slate-700 font-black text-emerald-600 dark:text-emerald-500 text-sm gap-1 bg-emerald-100/30 dark:bg-emerald-800/20">
-                <span className="text-2xl">🍲</span><span className="text-xs">급식</span>
-              </div>
-              {daysInWeek.map((date, i) => {
-                const dateStr = dateUtils.formatDate(date);
-                const isHoliday = holidays.some(h => h.date === dateStr && h.isHoliday !== false);
-                const menu = getMockLunchMenu(date.getDay());
-                return (
-                  <div key={`lunch-${dateStr}`} className={`p-2 flex flex-col justify-center items-center border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHoliday ? 'bg-rose-50/80 dark:bg-rose-900/20' : ''}`}>
-                    {!isHoliday ? (
-                      <div className="text-[11px] text-slate-700 dark:text-slate-300 font-bold leading-relaxed whitespace-pre-wrap text-center">{menu}</div>
-                    ) : (
-                      <div className="text-xs text-rose-400 dark:text-rose-500 font-bold">휴일</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
           </div>
         </div>
       </div>
@@ -863,14 +853,14 @@ function ManagePage() {
                 <span className="text-xs font-bold text-slate-500 dark:text-slate-300 bg-white/50 dark:bg-black/20 px-3 py-1.5 rounded-lg">{selectedItem.item.date} ({selectedItem.item.period}교시)</span>
               </div>
               <h2 className="text-xl md:text-2xl font-black text-slate-800 dark:text-white mt-2 leading-snug">
-                {selectedItem.item.type === 'lesson' ? `[${selectedItem.item.lesson?.order}차시] ${selectedItem.item.lesson?.title}` : `[일정] ${selectedItem.item.event?.title}`}
+                {selectedItem.item.type === 'lesson' ? `[${selectedItem.item.lesson?.order}차시] ${selectedItem.item.lesson?.title}` : `[보강] ${selectedItem.item.event?.title}`}
               </h2>
             </div>
             <div className="p-6 md:p-8 space-y-6 text-sm">
               <div>
                 <h4 className="text-xs font-black text-slate-400 uppercase mb-2">{selectedItem.item.type === 'lesson' ? '선생님 비고' : '일정 구분'}</h4>
                 <div className="text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-900/50 p-5 rounded-2xl border border-slate-100 dark:border-slate-700 whitespace-pre-wrap leading-relaxed text-base font-medium">
-                  {selectedItem.item.type === 'lesson' ? (selectedItem.item.lesson?.memo || <span className="text-slate-400 italic">기록된 비고가 없습니다.</span>) : (selectedItem.item.event?.type === 'extra' ? '추가 보강 수업입니다.' : '정규 수업이 제외되는 행사입니다.')}
+                  {selectedItem.item.type === 'lesson' ? (selectedItem.item.lesson?.memo || <span className="text-slate-400 italic">기록된 비고가 없습니다.</span>) : '추가 보강 수업입니다.'}
                 </div>
               </div>
 
@@ -1087,16 +1077,28 @@ function EventModal({ classId, className, onClose, onAdd }: EventModalProps) {
   );
 }
 
-interface HolidayModalProps { onClose: () => void; onAdd: (holiday: Holiday) => void; }
+// [수정] 2. 공통 학급 일정 기간 등록 및 수업 연기
+interface HolidayModalProps { onClose: () => void; onAdd: (holidays: Holiday[]) => void; }
 function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
-  const [newDate, setNewDate] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [newTitle, setNewTitle] = useState('');
-  const [isHolidayType, setIsHolidayType] = useState(true); // [추가] 휴강 vs 단순일정
+  const [isHolidayType, setIsHolidayType] = useState(true);
   const [error, setError] = useState('');
 
   const handleAdd = () => {
-    if (!newDate || !newTitle.trim()) { setError('날짜와 내용을 입력하세요.'); return; }
-    onAdd({ id: `h-${Date.now()}`, date: newDate, title: newTitle, isHoliday: isHolidayType });
+    if (!startDate || !endDate || !newTitle.trim()) { setError('날짜와 내용을 입력하세요.'); return; }
+    const start = dateUtils.parseDate(startDate);
+    const end = dateUtils.parseDate(endDate);
+    if (start > end) { setError('종료일이 시작일보다 빠를 수 없습니다.'); return; }
+
+    const newHolidays: Holiday[] = [];
+    let curr = start;
+    while (curr <= end) {
+      newHolidays.push({ id: `h-${Date.now()}-${Math.random().toString(36).substr(2,9)}`, date: dateUtils.formatDate(curr), title: newTitle, isHoliday: isHolidayType });
+      curr = dateUtils.addDays(curr, 1);
+    }
+    onAdd(newHolidays);
   };
 
   return (
@@ -1112,9 +1114,18 @@ function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
               <button onClick={() => setIsHolidayType(true)} className={`flex-1 py-2.5 rounded-lg font-bold transition-colors ${isHolidayType ? 'bg-white dark:bg-slate-800 shadow-sm text-rose-600 dark:text-rose-400' : 'text-slate-500'}`}>휴강 (공휴일 등)</button>
               <button onClick={() => setIsHolidayType(false)} className={`flex-1 py-2.5 rounded-lg font-bold transition-colors ${!isHolidayType ? 'bg-white dark:bg-slate-800 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-500'}`}>단순 일정 (평가 등)</button>
             </div>
-            <p className="text-[10px] text-gray-500 mt-2 ml-1">{isHolidayType ? '* 설정 시 해당 요일의 모든 정규 수업이 다음으로 밀립니다.' : '* 진도표 상단에 텍스트만 표시되며 수업이 밀리지 않습니다.'}</p>
+            <p className="text-[10px] text-gray-500 mt-2 ml-1">* 어떤 유형으로 등록하든 해당 요일의 정규 수업은 다음 차시로 밀립니다.</p>
           </div>
-          <div><label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">날짜</label><input type="date" aria-label="전체 일정 날짜" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold outline-none focus:ring-2 focus:ring-indigo-500" /></div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">시작일</label>
+              <input type="date" aria-label="시작일" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div className="flex-1">
+              <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">종료일</label>
+              <input type="date" aria-label="종료일" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
           <div><label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">일정명</label><input type="text" aria-label="전체 일정 이름" value={newTitle} onChange={e => setNewTitle(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500" placeholder={isHolidayType ? "예: 개교기념일" : "예: 1학기 중간고사"} /></div>
         </div>
         <div className="mt-6 flex justify-end gap-2">
@@ -1161,7 +1172,8 @@ function SettingsPage() {
   const handleAddClass = async (newClass: ClassSchedule) => { try { await updateClasses([...classes, newClass]); setSelectedTabClassId(newClass.classId); setClassModalOpen(false); addToast('학급이 추가되었습니다.', 'success'); } catch { addToast('학급 추가에 실패했습니다.'); } };
   const handleAddEvent = async (newEvent: ClassEvent) => { try { await updateEvents([...events, newEvent]); setEventModalOpen(false); addToast('일정이 등록되었습니다.', 'success'); } catch { addToast('일정 등록에 실패했습니다.'); } };
   const handleDeleteEvent = async (id: string) => { try { await updateEvents(events.filter(ev => ev.id !== id)); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
-  const handleAddHoliday = async (newHoliday: Holiday) => { try { await updateHolidays([...holidays, newHoliday].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())); setHolidayModalOpen(false); addToast('전체 일정이 등록되었습니다.', 'success'); } catch { addToast('일정 등록에 실패했습니다.'); } };
+  // [수정] Holiday 배열을 한번에 받아 처리
+  const handleAddHoliday = async (newHolidays: Holiday[]) => { try { await updateHolidays([...holidays, ...newHolidays].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())); setHolidayModalOpen(false); addToast('전체 일정이 등록되었습니다.', 'success'); } catch { addToast('일정 등록에 실패했습니다.'); } };
   const handleDeleteHoliday = async (idOrDate: string) => { try { await updateHolidays(holidays.filter(h => (h.id || h.date) !== idOrDate)); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
 
   const renderColorPicker = (selCol: ClassColor, onSel: (c: ClassColor) => void) => (
