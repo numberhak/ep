@@ -150,7 +150,8 @@ function generateClassLessonSchedule(
 
         if (classEvent) {
           if (classEvent.type === 'exception') {
-            scheduledItems.push({ date: dateStr, period, type: 'event', event: classEvent, classId: schedule.classId });
+            // [수정1] 결강된 수업은 scheduledItems에 추가하지 않음 (주간 진도표에서 완전 삭제)
+            // lessonIndex를 증가시키지 않으므로 해당 차시는 다음 수업으로 밀림
           } else if (classEvent.type === 'extra') {
             scheduledItems.push({ date: dateStr, period, type: 'lesson', lesson: sortedLessons[lessonIndex], classId: schedule.classId });
             lessonIndex++;
@@ -375,30 +376,30 @@ function LessonPlanPage() {
         {/* 모바일 카드 뷰 */}
         <div className="md:hidden space-y-4">
           {displayData.map((lesson, index) => (
-            <div key={lesson.id} className={`bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border ${isEditMode ? 'border-indigo-200 dark:border-indigo-800/60' : 'border-gray-100 dark:border-slate-700'} flex flex-col gap-3`}>
-              <div className="flex justify-between items-center border-b border-gray-50 dark:border-slate-700/50 pb-3">
-                <span className="font-black text-lg text-indigo-600 dark:text-indigo-400">{lesson.order}차시</span>
-                <div className="flex items-center gap-1">
-                  <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30 bg-gray-50 dark:bg-slate-900">▲</button>
-                  <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30 bg-gray-50 dark:bg-slate-900">▼</button>
-                  <button aria-label="수업 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-md font-bold ml-2 bg-gray-50 dark:bg-slate-900">✕</button>
+            <div key={lesson.id} className={`bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border ${isEditMode ? 'border-indigo-300 dark:border-indigo-700' : 'border-gray-200 dark:border-slate-700'} flex flex-col gap-4`}>
+              <div className="flex justify-between items-center border-b border-gray-100 dark:border-slate-700/50 pb-3">
+                <span className="font-black text-xl text-indigo-600 dark:text-indigo-400">{lesson.order}차시</span>
+                <div className="flex items-center gap-2">
+                  <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-10 h-10 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-xl disabled:opacity-30 bg-gray-50 dark:bg-slate-900 text-lg">▲</button>
+                  <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-10 h-10 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-xl disabled:opacity-30 bg-gray-50 dark:bg-slate-900 text-lg">▼</button>
+                  <button aria-label="수업 삭제" onClick={() => deleteLesson(lesson.id)} className="w-10 h-10 flex items-center justify-center text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-xl font-bold ml-1 bg-gray-50 dark:bg-slate-900 text-lg">✕</button>
                 </div>
               </div>
               {isEditMode ? (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 mb-1">수업 제목</label>
-                    <input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" />
+                    <label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">수업 제목</label>
+                    <input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3.5 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 mb-1">교사용 메모</label>
-                    <textarea value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm min-h-[80px]" placeholder="메모 입력" />
+                    <label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">교사용 메모</label>
+                    <textarea value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3.5 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm min-h-[100px]" placeholder="메모 입력" />
                   </div>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  <div className="font-bold text-lg text-gray-800 dark:text-gray-200">{lesson.title || <span className="text-gray-300 dark:text-slate-600 font-normal italic">제목 없음</span>}</div>
-                  <div className="text-gray-600 dark:text-slate-400 text-sm whitespace-pre-wrap bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl">{lesson.memo || '메모 없음'}</div>
+                <div className="space-y-3">
+                  <div className="font-bold text-xl text-gray-800 dark:text-gray-100">{lesson.title || <span className="text-gray-300 dark:text-slate-600 font-normal italic">제목 없음</span>}</div>
+                  <div className="text-gray-600 dark:text-slate-400 text-base whitespace-pre-wrap bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl leading-relaxed">{lesson.memo || '메모 없음'}</div>
                 </div>
               )}
             </div>
@@ -460,10 +461,10 @@ function TasksPage() {
                 <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
               </label>
             </div>
-            {hasDeadline && <input type="date" aria-label="업무 마감일" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />}
+            {hasDeadline && <input type="date" aria-label="업무 마감일" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3.5 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />}
             <div>
-              <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">업무 내용</label>
-              <input type="text" aria-label="업무 내용" value={newTitle} onChange={e => setNewTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="예: 수행평가 문제 출제" />
+              <label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">업무 내용</label>
+              <input type="text" aria-label="업무 내용" value={newTitle} onChange={e => setNewTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} className="w-full border border-gray-300 dark:border-slate-600 p-3.5 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="예: 수행평가 문제 출제" />
             </div>
             <button onClick={handleAdd} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-base rounded-xl shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-800">추가하기</button>
           </div>
@@ -476,20 +477,20 @@ function TasksPage() {
 
             return (
               <div key={task.id} className={`flex items-center justify-between p-4 md:p-5 rounded-2xl border shadow-sm transition-all group ${task.completed ? 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 opacity-60' : isOverdue ? 'bg-rose-50/50 dark:bg-rose-900/10 border-rose-200 dark:border-rose-800/50' : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700'}`}>
-                <div className="flex items-center gap-4 md:gap-5 overflow-hidden w-full">
-                  <button aria-label="완료 토글" onClick={() => toggleTask(task.id)} className={`shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${task.completed ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-gray-300 dark:border-gray-600 text-transparent hover:border-indigo-400 bg-white dark:bg-slate-900'}`}>
+                <div className="flex items-center gap-3 md:gap-5 overflow-hidden w-full">
+                  <button aria-label="완료 토글" onClick={() => toggleTask(task.id)} className={`shrink-0 w-10 h-10 md:w-8 md:h-8 rounded-full border-2 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${task.completed ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-gray-300 dark:border-gray-600 text-transparent hover:border-indigo-400 bg-white dark:bg-slate-900'}`}>
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
                   </button>
-                  <div className="flex flex-col min-w-0 flex-1">
+                  <div className="flex flex-col min-w-0 flex-1 gap-1.5">
                     <span className={`text-base md:text-lg font-bold truncate ${task.completed ? 'line-through text-slate-500 dark:text-slate-400' : 'text-slate-800 dark:text-white'}`}>{task.title}</span>
-                    <div className="flex items-center gap-2 mt-1">
+                    <div className="flex items-center gap-2 flex-wrap">
                       {task.date ? (
                         <>
-                          <span className={`text-[10px] md:text-xs font-black px-2 py-0.5 rounded-md ${task.completed ? 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400' : isOverdue ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300'}`}>{task.date}</span>
-                          {!task.completed && <span className={`text-sm md:text-base font-black tracking-tight ${isOverdue ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>}
+                          <span className={`text-xs font-black px-2.5 py-1 rounded-lg ${task.completed ? 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400' : isOverdue ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300'}`}>{task.date}</span>
+                          {!task.completed && <span className={`text-lg md:text-xl font-black tracking-tight ${isOverdue ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>}
                         </>
                       ) : (
-                        <span className="text-[10px] md:text-xs font-bold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700">마감일 없음</span>
+                        <span className="text-xs font-bold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700">마감일 없음</span>
                       )}
                     </div>
                   </div>
@@ -520,16 +521,16 @@ function ScoreCard({ title, score, onUpdate, colorStyle }: { title: string; scor
   };
 
   return (
-    <div className="bg-white/80 dark:bg-slate-800/80 p-4 rounded-2xl shadow-sm border border-white dark:border-slate-700 min-w-[150px] flex-1 flex flex-col backdrop-blur-sm shrink-0 snap-center">
-      <div className={`text-xs md:text-sm font-black ${colorStyle.text} opacity-80 mb-1`}>{title}</div>
-      <div className="text-3xl font-black text-gray-800 dark:text-white mb-4">{score}점</div>
+    <div className="bg-white/80 dark:bg-slate-800/80 p-4 md:p-5 rounded-2xl shadow-sm border border-white dark:border-slate-700 min-w-[160px] flex-1 flex flex-col backdrop-blur-sm shrink-0 snap-center">
+      <div className={`text-sm md:text-sm font-black ${colorStyle.text} opacity-80 mb-1`}>{title}</div>
+      <div className="text-4xl md:text-3xl font-black text-gray-800 dark:text-white mb-4">{score}점</div>
       <div className="flex gap-2 mb-3">
-        <button aria-label={`${title} 1점 추가`} onClick={() => onUpdate(1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-xl text-base font-black py-2 transition-colors shadow-sm">+1</button>
-        <button aria-label={`${title} 1점 차감`} onClick={() => onUpdate(-1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-xl text-base font-black py-2 transition-colors shadow-sm">-1</button>
+        <button aria-label={`${title} 1점 추가`} onClick={() => onUpdate(1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-xl text-lg md:text-base font-black py-3 md:py-2 transition-colors shadow-sm">+1</button>
+        <button aria-label={`${title} 1점 차감`} onClick={() => onUpdate(-1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-xl text-lg md:text-base font-black py-3 md:py-2 transition-colors shadow-sm">-1</button>
       </div>
       <div className="flex gap-2 mt-auto">
-        <input type="number" aria-label={`${title} 사용자 입력 점수`} value={customInput} onChange={e => setCustomInput(e.target.value === '' ? '' : Number(e.target.value))} className="w-full text-sm border border-gray-200 dark:border-slate-600 p-2 rounded-xl text-center font-bold outline-none focus:border-indigo-500 dark:focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white" placeholder="점수" />
-        <button aria-label={`${title} 점수 반영`} onClick={handleApply} className="bg-slate-800 dark:bg-indigo-600 text-white text-xs px-4 rounded-xl font-bold hover:bg-slate-700 dark:hover:bg-indigo-500 whitespace-nowrap shadow-sm">반영</button>
+        <input type="number" aria-label={`${title} 사용자 입력 점수`} value={customInput} onChange={e => setCustomInput(e.target.value === '' ? '' : Number(e.target.value))} className="w-full text-base border border-gray-200 dark:border-slate-600 p-3 rounded-xl text-center font-bold outline-none focus:border-indigo-500 dark:focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white" placeholder="점수" />
+        <button aria-label={`${title} 점수 반영`} onClick={handleApply} className="bg-slate-800 dark:bg-indigo-600 text-white text-sm px-4 rounded-xl font-bold hover:bg-slate-700 dark:hover:bg-indigo-500 whitespace-nowrap shadow-sm">반영</button>
       </div>
     </div>
   );
@@ -605,7 +606,7 @@ function RecordsPage() {
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">학급 기록장</h1>
           <p className="text-gray-600 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">선택한 학급의 누적 점수와 특이사항을 기록합니다.</p>
         </div>
-        <select aria-label="기록할 학급 선택" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)} className="w-full sm:w-auto text-base md:text-sm bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border border-gray-300 dark:border-slate-600 text-gray-800 dark:text-white px-4 py-3 md:py-2.5 rounded-xl font-bold shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <select aria-label="기록할 학급 선택" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)} className="w-full sm:w-auto text-base bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border border-gray-300 dark:border-slate-600 text-gray-800 dark:text-white px-4 py-3.5 rounded-xl font-bold shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
           <option value="" disabled>학급을 선택하세요</option>
           {classes.map(c => <option key={c.classId} value={c.classId}>{c.className}</option>)}
         </select>
@@ -625,8 +626,8 @@ function RecordsPage() {
               <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-white dark:border-slate-700 h-full flex flex-col">
                 <h3 className="font-bold text-lg text-slate-800 dark:text-white mb-5 flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${COLOR_MAP[activeClass.color].bg} border border-gray-300 dark:border-slate-600`}></span>{activeClass.className} 새 기록 작성</h3>
                 <div className="space-y-5 flex-1 flex flex-col">
-                  <div><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-1.5">날짜</label><input type="date" aria-label="기록 날짜" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" /></div>
-                  <div className="flex-1 flex flex-col"><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-1.5">내용</label><textarea aria-label="기록 내용" value={newContent} onChange={e => setNewContent(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-4 rounded-xl text-base flex-1 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white min-h-[120px] md:min-h-0" placeholder="이 학급의 오늘 수업 분위기, 특이사항 등을 남겨주세요." /></div>
+                  <div><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">날짜</label><input type="date" aria-label="기록 날짜" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3.5 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" /></div>
+                  <div className="flex-1 flex flex-col"><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">내용</label><textarea aria-label="기록 내용" value={newContent} onChange={e => setNewContent(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-4 rounded-xl text-base flex-1 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white min-h-[140px] md:min-h-0" placeholder="이 학급의 오늘 수업 분위기, 특이사항 등을 남겨주세요." /></div>
                   <button onClick={handleSave} className="w-full py-4 bg-slate-800 dark:bg-indigo-600 hover:bg-slate-900 dark:hover:bg-indigo-500 text-white text-base font-bold rounded-xl shadow-sm transition-colors mt-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 dark:focus-visible:ring-indigo-400 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-800">기록 저장하기</button>
                 </div>
               </div>
@@ -646,8 +647,8 @@ function RecordsPage() {
                 {classRecords.length > 0 ? classRecords.map(rec => (
                   <div key={rec.id} className="bg-white dark:bg-slate-900/50 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700/50 group relative">
                     <div className="flex justify-between items-start mb-3">
-                      <div className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-xs font-black tracking-wider">{rec.date}</div>
-                      <button aria-label="기록 삭제" onClick={() => setConfirmDeleteId(rec.id)} className="text-rose-500 text-sm font-bold opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity hover:underline focus:opacity-100 p-1">삭제</button>
+                      <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-sm font-black tracking-wider">{rec.date}</div>
+                      <button aria-label="기록 삭제" onClick={() => setConfirmDeleteId(rec.id)} className="text-rose-500 text-base font-bold opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity hover:underline focus:opacity-100 p-1">삭제</button>
                     </div>
                     <div className="text-slate-700 dark:text-slate-200 text-base whitespace-pre-wrap leading-relaxed font-medium">{rec.content}</div>
                   </div>
@@ -762,8 +763,8 @@ function ManagePage() {
                       const ddayText = dday === 0 ? 'D-Day' : dday > 0 ? `D-${dday}` : `D+${Math.abs(dday)}`;
                       return (
                         <div key={t.id} title={t.title} className="flex items-center gap-1.5 text-xs font-medium text-indigo-800 dark:text-indigo-100 bg-indigo-100 dark:bg-indigo-900/60 px-2 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-700/80 w-full shadow-sm overflow-hidden">
-                          <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 shrink-0">{ddayText}</span>
-                          <span className="truncate flex-1 text-left font-bold">{t.title}</span>
+                          <span className="text-base font-black text-indigo-600 dark:text-indigo-400 shrink-0 leading-none">{ddayText}</span>
+                          <span className="truncate flex-1 text-left text-xs font-bold">{t.title}</span>
                         </div>
                       );
                     })}
@@ -782,11 +783,9 @@ function ManagePage() {
                   const dateStr = dateUtils.formatDate(date);
                   const isHoliday = holidays.some(h => h.date === dateStr && h.isHoliday !== false);
                   
-                  // [수정1] 결강(exception)된 수업은 아예 렌더링하지 않음 (완전 비워짐)
-                  const cellItems = (scheduleMap.get(`${dateStr}-${period}`) || []).filter(data => {
-                    if (data.item.type === 'event' && data.item.event?.type === 'exception') return false;
-                    return true;
-                  });
+                  // [수정1] generateClassLessonSchedule에서 exception은 이미 제거됨
+                  // scheduleMap에 들어오는 항목은 모두 표시할 항목임
+                  const cellItems = scheduleMap.get(`${dateStr}-${period}`) || [];
 
                   // [수정3] 비해당 시간표 회색 음영 처리 (휴일이 아니고 해당 학급 정규수업이 아닌 경우)
                   let isTargetSlot = false;
