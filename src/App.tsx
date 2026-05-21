@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, createContext, useContext } from 'react';
+import React, { useState, useEffect, useMemo, useRef, createContext, useContext } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import type { User } from 'firebase/auth';
@@ -686,6 +686,20 @@ function ManagePage() {
   const daysInWeek = Array.from({ length: 5 }, (_, i) => dateUtils.addDays(currentWeekStart, i));
   const weekEndDateStr = dateUtils.formatDate(dateUtils.addDays(currentWeekStart, 4));
 
+  const todayStr = dateUtils.formatDate(new Date());
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const todayColRef = useRef<HTMLDivElement>(null);
+
+  // 오늘 날짜가 이번 주에 포함되면 해당 열이 보이도록 가로 스크롤
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    const todayCol = todayColRef.current;
+    if (!container || !todayCol) return;
+    // 교시 열(60px) + 여유 16px을 빼서 오늘 열이 왼쪽에 깔끔하게 붙도록
+    const colLeft = todayCol.offsetLeft;
+    container.scrollTo({ left: Math.max(0, colLeft - 76), behavior: 'smooth' });
+  }, [currentWeekStart]);
+
   const schedulesToRender = useMemo(() => {
     const targetClasses = selectedClassId === 'all' ? classes : classes.filter(c => c.classId === selectedClassId);
     const allItems: { item: ScheduledItem; classInfo: ClassSchedule }[] = [];
@@ -802,13 +816,14 @@ function ManagePage() {
         </div>
       )}
 
-      <div className="flex-1 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-auto flex flex-col relative min-w-0">
+      <div ref={scrollContainerRef} className="flex-1 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-auto flex flex-col relative min-w-0">
         <div className="min-w-[700px]">
           {/* Header Row */}
           <div className="grid grid-cols-[60px_repeat(5,minmax(0,1fr))] bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-sm border-b border-gray-200 dark:border-slate-700 sticky top-0 z-10 shadow-sm min-h-[80px]">
             <div className="p-2 flex items-center justify-center text-[11px] font-bold text-slate-400 dark:text-slate-500 border-r border-gray-200 dark:border-slate-700 sticky left-0 z-20 bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-sm">교시</div>
             {daysInWeek.map((date, i) => {
               const dateStr = dateUtils.formatDate(date);
+              const isToday = dateStr === todayStr;
               const dayHolidays = holidays.filter(h => h.date === dateStr && h.isHoliday !== false);
               const dayEvents = holidays.filter(h => h.date === dateStr && h.isHoliday === false);
               const isHolidayDay = dayHolidays.length > 0;
@@ -816,9 +831,13 @@ function ManagePage() {
               const dayTasksForCell = tasks.filter(t => !t.completed && t.date && t.date === dateStr);
 
               return (
-                <div key={i} className={`p-2 flex flex-col items-center border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHolidayDay ? 'bg-rose-50/80 dark:bg-rose-900/20' : ''}`}>
-                  <div className="text-xs font-bold text-slate-500 dark:text-slate-400">{dayNames[i]}</div>
-                  <div className={`text-base md:text-xl font-black leading-tight ${isHolidayDay ? 'text-rose-500' : 'text-slate-800 dark:text-slate-200'}`}>{date.getDate()}</div>
+                <div
+                  key={i}
+                  ref={isToday ? todayColRef : undefined}
+                  className={`p-2 flex flex-col items-center border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHolidayDay ? 'bg-rose-50/80 dark:bg-rose-900/20' : isToday ? 'bg-indigo-50/80 dark:bg-indigo-900/20' : ''}`}
+                >
+                  <div className={`text-xs font-bold ${isToday ? 'text-indigo-500 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400'}`}>{dayNames[i]}</div>
+                  <div className={`text-base md:text-xl font-black leading-tight ${isHolidayDay ? 'text-rose-500' : isToday ? 'text-white bg-indigo-500 rounded-full w-8 h-8 flex items-center justify-center text-base mt-0.5' : 'text-slate-800 dark:text-slate-200'}`}>{date.getDate()}</div>
                   {dayHolidays.map(h => <div key={h.id} className="text-[10px] font-bold text-rose-500 mt-0.5 text-center break-keep leading-tight">{h.title}</div>)}
                   {dayEvents.map(e => <div key={e.id} className="text-[10px] font-bold text-blue-600 dark:text-blue-400 mt-1 text-center bg-blue-50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded-md break-keep leading-tight">{e.title}</div>)}
                   
@@ -847,6 +866,7 @@ function ManagePage() {
                 <div className="flex items-center justify-center border-r border-gray-200 dark:border-slate-700 bg-slate-100/80 dark:bg-slate-800/80 font-black text-slate-300 dark:text-slate-600 text-xl sticky left-0 z-10 backdrop-blur-sm shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">{period}</div>
                 {daysInWeek.map((date) => {
                   const dateStr = dateUtils.formatDate(date);
+                  const isToday = dateStr === todayStr;
                   const isHoliday = holidays.some(h => h.date === dateStr && h.isHoliday !== false);
                   const cellItems = scheduleMap.get(`${dateStr}-${period}`) || [];
 
@@ -858,10 +878,11 @@ function ManagePage() {
                     isTargetSlot = classes.some(c => c.weeklySlots.some(s => s.dayOfWeek === date.getDay() && s.period === period));
                   }
                   
-                  const shadingClass = !isTargetSlot && !isHoliday ? 'bg-gray-100/80 dark:bg-slate-800/40 opacity-70' : '';
+                  const shadingClass = !isTargetSlot && !isHoliday && !isToday ? 'bg-gray-100/80 dark:bg-slate-800/40 opacity-70' : '';
+                  const todayClass = isToday && !isHoliday ? 'bg-indigo-50/40 dark:bg-indigo-900/10' : '';
 
                   return (
-                    <div key={dateStr} className={`p-2 border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHoliday ? 'bg-rose-50/80 dark:bg-rose-900/20' : shadingClass} flex flex-col gap-1.5`}>
+                    <div key={dateStr} className={`p-2 border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHoliday ? 'bg-rose-50/80 dark:bg-rose-900/20' : todayClass || shadingClass} flex flex-col gap-1.5`}>
                       {cellItems.length > 0 ? (
                         cellItems.map((data, idx) => {
                           const style = COLOR_MAP[data.classInfo.color];
@@ -1644,34 +1665,34 @@ export default function App() {
     <ToastProvider>
       <AppContext.Provider value={contextValue}>
 
-        {/* ── 통합 레이아웃: 항상 사이드바, 좁은 화면에서 아이콘 전용으로 축소 ── */}
-        <div className="flex h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 overflow-hidden selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
-          {/* 사이드바: 항상 표시. 600px 미만(스마트폰)에서는 숨기고 하단 탭바 사용 */}
-          <aside
-            className="bg-slate-900 flex flex-col z-20 shrink-0 border-r border-slate-800 shadow-xl transition-all duration-300"
-            style={{ width: 'clamp(56px, 15vw, 256px)' }}
-          >
-            {/* 로고: 넓을 때만 텍스트 표시 */}
-            <div className="p-3 pb-2 flex flex-col items-center" style={{ padding: 'clamp(12px, 2vw, 24px)' }}>
-              <div className="flex items-center gap-3 text-white mb-1 w-full overflow-hidden">
-                <div className="p-2 bg-indigo-500 rounded-xl shadow-lg shrink-0"><IconCalendar /></div>
-                <span className="text-lg font-black tracking-tight truncate hidden" style={{ display: 'var(--sidebar-text-display, none)' }}>에듀플래너</span>
+        {/* ── CSS 미디어 쿼리로 레이아웃 전환 (600px 기준) ── */}
+        <style>{`
+          .layout-root { display: flex; flex-direction: column; height: 100vh; }
+          .layout-sidebar { display: none; }
+          .layout-bottom-nav { display: flex; }
+          @media (min-width: 600px) {
+            .layout-root { flex-direction: row; }
+            .layout-sidebar { display: flex; width: clamp(180px, 18vw, 256px); }
+            .layout-bottom-nav { display: none; }
+          }
+        `}</style>
+
+        <div className="layout-root bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 overflow-hidden selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
+
+          {/* ── 사이드바 (600px 이상) ── */}
+          <aside className="layout-sidebar flex-col bg-slate-900 z-20 shrink-0 border-r border-slate-800 shadow-xl">
+            <div className="p-6 pb-2">
+              <div className="flex items-center gap-3 text-white mb-2">
+                <div className="p-2 bg-indigo-500 rounded-xl shadow-lg"><IconCalendar /></div>
+                <span className="text-xl font-black tracking-tight truncate">에듀플래너</span>
               </div>
-              <div
-                className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2 w-full overflow-hidden"
-                style={{ display: 'var(--sidebar-text-display, none)' }}
-              >
+              <div className="text-[10px] font-bold text-slate-500 px-1 uppercase tracking-widest flex items-center gap-2">
                 Smart Scheduler
-                <span className={`w-2 h-2 rounded-full animate-pulse shrink-0 ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`} title={isFirebaseEnabled ? "클라우드 연동됨" : "로컬 스토리지 보관됨"}></span>
+                <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`} title={isFirebaseEnabled ? "클라우드 연동됨" : "로컬 스토리지 보관됨"}></span>
               </div>
-              {/* 좁을 때 상태 점만 표시 */}
-              <span
-                className={`w-2 h-2 rounded-full animate-pulse mt-1 ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`}
-                style={{ display: 'var(--sidebar-dot-display, block)' }}
-              ></span>
             </div>
 
-            <nav className="flex-1 px-2 space-y-1 mt-2 overflow-y-auto scrollbar-hide">
+            <nav className="flex-1 px-4 space-y-2 mt-6 overflow-y-auto scrollbar-hide">
               {menuOrderState.map((itemId, index) => {
                 const item = NAV_ITEMS_CONFIG[itemId];
                 if (!item) return null;
@@ -1684,34 +1705,24 @@ export default function App() {
                     onDrop={(e) => handleNavDrop(e, index)}
                     className={`cursor-grab active:cursor-grabbing transition-opacity ${draggedNavIdx === index ? 'opacity-30' : 'opacity-100'}`}
                   >
-                    <button
-                      title={item.label}
-                      onClick={() => { setActivePage(item.id as any); setPageParams(null); }}
-                      className={`w-full flex items-center justify-center gap-3 px-2 py-3 rounded-xl transition-all duration-200 focus:outline-none overflow-hidden ${activePage === item.id ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-                      style={{ justifyContent: 'var(--sidebar-btn-justify, center)' }}
-                    >
-                      <span className="shrink-0">{item.icon}</span>
-                      <span
-                        className="font-bold text-sm truncate"
-                        style={{ display: 'var(--sidebar-text-display, none)' }}
-                      >{item.label}</span>
+                    <button onClick={() => { setActivePage(item.id as any); setPageParams(null); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-200 focus:outline-none ${activePage === item.id ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                      <div className="opacity-20 hover:opacity-100 transition-opacity px-1 flex flex-col gap-[3px] items-center justify-center shrink-0" aria-hidden="true" title="드래그하여 순서 변경">
+                        <span className="w-1 h-1 bg-current rounded-full"></span><span className="w-1 h-1 bg-current rounded-full"></span><span className="w-1 h-1 bg-current rounded-full"></span>
+                      </div>
+                      {item.icon}
+                      <span className="font-bold text-sm">{item.label}</span>
                     </button>
                   </div>
                 );
               })}
             </nav>
 
-            <div className="p-2" style={{ padding: 'clamp(8px, 1.5vw, 16px)' }}>
-              <button
-                aria-label="프로필 설정 수정"
-                onClick={() => setIsProfileModalOpen(true)}
-                className="w-full text-left bg-slate-800/50 rounded-2xl border border-slate-700/50 flex items-center gap-3 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 group overflow-hidden"
-                style={{ padding: 'clamp(8px, 1.5vw, 16px)' }}
-              >
-                <div className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-base shrink-0 uppercase shadow-inner">
+            <div className="p-4">
+              <button aria-label="프로필 설정 수정" onClick={() => setIsProfileModalOpen(true)} className="w-full text-left bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 flex items-center gap-3 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 group">
+                <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-lg shrink-0 uppercase shadow-inner">
                   {profileState.name.charAt(0) || 'U'}
                 </div>
-                <div className="overflow-hidden flex-1" style={{ display: 'var(--sidebar-text-display, none)' }}>
+                <div className="overflow-hidden flex-1">
                   <div className="text-white text-sm font-bold truncate group-hover:text-indigo-300 transition-colors flex items-center justify-between">
                     <span className="truncate">{profileState.name}</span>
                     <span className="opacity-0 group-hover:opacity-100 text-xs shrink-0 ml-1">✏️</span>
@@ -1722,23 +1733,7 @@ export default function App() {
             </div>
           </aside>
 
-          {/* CSS 변수로 사이드바 텍스트/아이콘 표시 전환 */}
-          <style>{`
-            aside {
-              --sidebar-text-display: none;
-              --sidebar-dot-display: block;
-              --sidebar-btn-justify: center;
-            }
-            @container (min-width: 0px) { aside { } }
-            @media (min-width: 600px) {
-              aside {
-                --sidebar-text-display: block;
-                --sidebar-dot-display: none;
-                --sidebar-btn-justify: flex-start;
-              }
-            }
-          `}</style>
-
+          {/* ── 메인 콘텐츠 ── */}
           <main className="flex-1 overflow-hidden relative bg-white dark:bg-slate-900 min-w-0">
             <div className="max-w-[1400px] mx-auto h-full shadow-2xl bg-white dark:bg-slate-900 border-l border-r border-slate-100/50 dark:border-slate-800/50">
               {activePage === 'plan'     && <LessonPlanPage />}
@@ -1748,6 +1743,28 @@ export default function App() {
               {activePage === 'tasks'    && <TasksPage />}
             </div>
           </main>
+
+          {/* ── 하단 탭바 (600px 미만) ── */}
+          <nav className="layout-bottom-nav bg-white dark:bg-slate-900 border-t border-gray-200 dark:border-slate-800 shrink-0 px-2 pb-safe pt-1 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+            {menuOrderState.map((itemId) => {
+              const item = NAV_ITEMS_CONFIG[itemId];
+              if (!item) return null;
+              const isActive = activePage === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => { setActivePage(item.id as any); setPageParams(null); }}
+                  className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1.5 transition-colors focus:outline-none ${isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                >
+                  <div className={`transition-transform duration-200 ${isActive ? 'scale-110 -translate-y-0.5' : ''}`}>
+                    {item.icon}
+                  </div>
+                  <span className={`text-[10px] leading-none ${isActive ? 'font-black' : 'font-bold'}`}>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
         </div>
 
         {isProfileModalOpen && (
