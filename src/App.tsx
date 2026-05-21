@@ -806,7 +806,7 @@ function ManagePage() {
         <div className="min-w-[700px]">
           {/* Header Row */}
           <div className="grid grid-cols-[60px_repeat(5,minmax(0,1fr))] bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-sm border-b border-gray-200 dark:border-slate-700 sticky top-0 z-10 shadow-sm min-h-[80px]">
-            <div className="p-2 flex items-center justify-center text-[11px] font-bold text-slate-400 dark:text-slate-500 border-r border-gray-200 dark:border-slate-700">교시</div>
+            <div className="p-2 flex items-center justify-center text-[11px] font-bold text-slate-400 dark:text-slate-500 border-r border-gray-200 dark:border-slate-700 sticky left-0 z-20 bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-sm">교시</div>
             {daysInWeek.map((date, i) => {
               const dateStr = dateUtils.formatDate(date);
               const dayHolidays = holidays.filter(h => h.date === dateStr && h.isHoliday !== false);
@@ -844,7 +844,7 @@ function ManagePage() {
           <div className="divide-y divide-gray-100 dark:divide-slate-700/50 bg-slate-50/30 dark:bg-slate-900/20">
             {periods.map(period => (
               <div key={period} className="grid grid-cols-[60px_repeat(5,minmax(0,1fr))] min-h-[110px]">
-                <div className="flex items-center justify-center border-r border-gray-200 dark:border-slate-700 bg-slate-100/30 dark:bg-slate-800/30 font-black text-slate-300 dark:text-slate-600 text-xl">{period}</div>
+                <div className="flex items-center justify-center border-r border-gray-200 dark:border-slate-700 bg-slate-100/80 dark:bg-slate-800/80 font-black text-slate-300 dark:text-slate-600 text-xl sticky left-0 z-10 backdrop-blur-sm shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">{period}</div>
                 {daysInWeek.map((date) => {
                   const dateStr = dateUtils.formatDate(date);
                   const isHoliday = holidays.some(h => h.date === dateStr && h.isHoliday !== false);
@@ -1644,9 +1644,9 @@ export default function App() {
     <ToastProvider>
       <AppContext.Provider value={contextValue}>
 
-        {/* ── 데스크탑 레이아웃 (md 이상) ── */}
-        <div className="hidden md:flex h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 overflow-hidden selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
-          <aside className="w-64 bg-slate-900 flex flex-col z-20 shrink-0 border-r border-slate-800 shadow-xl">
+        {/* ── 데스크탑 레이아웃 (lg 이상) ── */}
+        <div className="hidden lg:flex h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 overflow-hidden selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
+          <aside className="w-52 lg:w-52 xl:w-64 bg-slate-900 flex flex-col z-20 shrink-0 border-r border-slate-800 shadow-xl">
             <div className="p-6 pb-2">
               <div className="flex items-center gap-3 text-white mb-2">
                 <div className="p-2 bg-indigo-500 rounded-xl shadow-lg"><IconCalendar /></div>
@@ -1710,8 +1710,8 @@ export default function App() {
           </main>
         </div>
 
-        {/* ── 모바일 레이아웃 (md 미만) ── */}
-        <div className="flex md:hidden flex-col h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
+        {/* ── 모바일/태블릿 레이아웃 (lg 미만) ── */}
+        <div className="flex lg:hidden flex-col h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
           <header className="bg-slate-900 px-5 py-4 flex items-center justify-between shrink-0 shadow-md z-20">
             <div className="flex items-center gap-2.5 text-white">
               <div className="p-1.5 bg-indigo-500 rounded-lg"><IconCalendar /></div>
