@@ -767,23 +767,34 @@ function ManagePage() {
         </div>
       </header>
 
-      {/* 마감일 없는 업무 & 이번 주 진행 중 업무 배너 */}
+      {/* 진행중 업무 배너: 마감일 없는 업무(키워드) + 마감일 있는 미완료 업무(D-n) */}
       {(noDeadlineTasks.length > 0 || deadlinedWeekTasks.length > 0) && (
         <div className="mb-3 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-900/50 rounded-xl px-4 py-3 shadow-sm flex flex-wrap gap-2 items-center">
           <span className="text-[11px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest shrink-0 mr-1">진행중</span>
           {noDeadlineTasks.map(t => (
             <span key={t.id} title={t.title} className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 max-w-[180px]">
-              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-400 shrink-0"></span>
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0"></span>
               <span className="truncate">{t.title}</span>
             </span>
           ))}
           {deadlinedWeekTasks.map(t => {
             const dday = dateUtils.getDDay(t.date!);
             const ddayText = dday === 0 ? 'D-Day' : dday > 0 ? `D-${dday}` : `D+${Math.abs(dday)}`;
+            const isToday = dday === 0;
             const isOverdue = dday < 0;
+            const colorCls = isToday
+              ? 'bg-rose-50 dark:bg-rose-900/30 border-rose-300 dark:border-rose-700/60 text-rose-700 dark:text-rose-200'
+              : isOverdue
+              ? 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-300'
+              : 'bg-indigo-50 dark:bg-indigo-900/40 border-indigo-200 dark:border-indigo-700/60 text-indigo-700 dark:text-indigo-200';
+            const ddayColorCls = isToday
+              ? 'text-rose-600 dark:text-rose-400 font-black'
+              : isOverdue
+              ? 'text-rose-500 dark:text-rose-400 font-black'
+              : 'text-indigo-600 dark:text-indigo-400 font-black';
             return (
-              <span key={t.id} title={t.title} className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg border max-w-[200px] ${isOverdue ? 'text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-900/30 border-rose-200 dark:border-rose-800/50' : 'text-indigo-700 dark:text-indigo-200 bg-indigo-50 dark:bg-indigo-900/40 border-indigo-200 dark:border-indigo-700/60'}`}>
-                <span className={`font-black shrink-0 ${isOverdue ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>
+              <span key={t.id} title={t.title} className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg border max-w-[200px] ${colorCls}`}>
+                <span className={`shrink-0 ${ddayColorCls}`}>{ddayText}</span>
                 <span className="truncate">{t.title}</span>
               </span>
             );
@@ -801,8 +812,8 @@ function ManagePage() {
               const dayHolidays = holidays.filter(h => h.date === dateStr && h.isHoliday !== false);
               const dayEvents = holidays.filter(h => h.date === dateStr && h.isHoliday === false);
               const isHolidayDay = dayHolidays.length > 0;
-              // 마감일이 있는 미완료 업무: 이 날짜가 마감일 이하인 경우 표시 (등록일~마감일 사이 매일 D-n 표시)
-              const dayTasksForCell = tasks.filter(t => !t.completed && t.date && dateStr <= t.date);
+              // 마감일 당일에만 업무 표시
+              const dayTasksForCell = tasks.filter(t => !t.completed && t.date && t.date === dateStr);
 
               return (
                 <div key={i} className={`p-2 flex flex-col items-center border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHolidayDay ? 'bg-rose-50/80 dark:bg-rose-900/20' : ''}`}>
