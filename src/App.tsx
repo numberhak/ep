@@ -656,7 +656,7 @@ function RecordsPage() {
                     <div className="text-slate-700 dark:text-slate-200 text-base whitespace-pre-wrap leading-relaxed font-medium">{rec.content}</div>
                   </div>
                 )) : (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500"><IconNotebook size={40} /><p className="mt-4 font-bold text-base">등록된 기록이 없습니다.</p></div>
+                  <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500"><IconNotebook /><p className="mt-4 font-bold text-base">등록된 기록이 없습니다.</p></div>
                 )}
               </div>
             </div>
