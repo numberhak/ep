@@ -745,9 +745,14 @@ function ManagePage() {
     try { await updateEvents(events.filter(e => e.id !== eventId)); setSelectedItem(null); setIsModifying(false); addToast('변경 사항이 취소되었습니다.', 'success'); } catch { addToast('취소 처리에 실패했습니다.'); }
   };
 
+  // 마감일 없는 미완료 업무: 주간 진도표 상단 고정 표시
+  const noDeadlineTasks = tasks.filter(t => !t.completed && !t.date);
+  // 마감일 있는 미완료 업무: 이번 주 전체에 걸쳐 D-n 표시 (마감일이 이번 주이거나 아직 안 지난 경우)
+  const deadlinedWeekTasks = tasks.filter(t => !t.completed && t.date);
+
   return (
     <div className="p-4 md:p-6 h-full flex flex-col animate-in fade-in duration-500 bg-slate-50/50 dark:bg-slate-900/50">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
         <div className="flex items-center gap-3 w-full md:w-auto">
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white tracking-tight shrink-0">주간 진도표</h1>
           <select aria-label="진도표 학급 선택" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)} className="w-full md:w-auto text-base md:text-sm bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-white px-4 py-2.5 md:py-1.5 rounded-lg font-bold shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -762,6 +767,30 @@ function ManagePage() {
         </div>
       </header>
 
+      {/* 마감일 없는 업무 & 이번 주 진행 중 업무 배너 */}
+      {(noDeadlineTasks.length > 0 || deadlinedWeekTasks.length > 0) && (
+        <div className="mb-3 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-900/50 rounded-xl px-4 py-3 shadow-sm flex flex-wrap gap-2 items-center">
+          <span className="text-[11px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest shrink-0 mr-1">진행중</span>
+          {noDeadlineTasks.map(t => (
+            <span key={t.id} title={t.title} className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 max-w-[180px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-400 shrink-0"></span>
+              <span className="truncate">{t.title}</span>
+            </span>
+          ))}
+          {deadlinedWeekTasks.map(t => {
+            const dday = dateUtils.getDDay(t.date!);
+            const ddayText = dday === 0 ? 'D-Day' : dday > 0 ? `D-${dday}` : `D+${Math.abs(dday)}`;
+            const isOverdue = dday < 0;
+            return (
+              <span key={t.id} title={t.title} className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg border max-w-[200px] ${isOverdue ? 'text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-900/30 border-rose-200 dark:border-rose-800/50' : 'text-indigo-700 dark:text-indigo-200 bg-indigo-50 dark:bg-indigo-900/40 border-indigo-200 dark:border-indigo-700/60'}`}>
+                <span className={`font-black shrink-0 ${isOverdue ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>
+                <span className="truncate">{t.title}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       <div className="flex-1 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-auto flex flex-col relative min-w-0">
         <div className="min-w-[700px]">
           {/* Header Row */}
@@ -772,23 +801,25 @@ function ManagePage() {
               const dayHolidays = holidays.filter(h => h.date === dateStr && h.isHoliday !== false);
               const dayEvents = holidays.filter(h => h.date === dateStr && h.isHoliday === false);
               const isHolidayDay = dayHolidays.length > 0;
-              const dayTasks = tasks.filter(t => t.date === dateStr && !t.completed);
+              // 마감일이 있는 미완료 업무: 이 날짜가 마감일 이하인 경우 표시 (등록일~마감일 사이 매일 D-n 표시)
+              const dayTasksForCell = tasks.filter(t => !t.completed && t.date && dateStr <= t.date);
 
               return (
                 <div key={i} className={`p-2 flex flex-col items-center border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHolidayDay ? 'bg-rose-50/80 dark:bg-rose-900/20' : ''}`}>
                   <div className="text-xs font-bold text-slate-500 dark:text-slate-400">{dayNames[i]}</div>
-                  <div className={`text-xl font-black ${isHolidayDay ? 'text-rose-500' : 'text-slate-800 dark:text-slate-200'}`}>{date.getDate()}</div>
-                  {dayHolidays.map(h => <div key={h.id} className="text-[10px] font-bold text-rose-500 uppercase mt-0.5 text-center">{h.title}</div>)}
-                  {dayEvents.map(e => <div key={e.id} className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase mt-1 text-center bg-blue-50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded-md">{e.title}</div>)}
+                  <div className={`text-base md:text-xl font-black leading-tight ${isHolidayDay ? 'text-rose-500' : 'text-slate-800 dark:text-slate-200'}`}>{date.getDate()}</div>
+                  {dayHolidays.map(h => <div key={h.id} className="text-[10px] font-bold text-rose-500 mt-0.5 text-center break-keep leading-tight">{h.title}</div>)}
+                  {dayEvents.map(e => <div key={e.id} className="text-[10px] font-bold text-blue-600 dark:text-blue-400 mt-1 text-center bg-blue-50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded-md break-keep leading-tight">{e.title}</div>)}
                   
-                  <div className="mt-1.5 flex flex-col gap-1 w-full px-1">
-                    {dayTasks.map(t => {
+                  <div className="mt-1.5 flex flex-col gap-1 w-full">
+                    {dayTasksForCell.map(t => {
                       const dday = dateUtils.getDDay(t.date!);
                       const ddayText = dday === 0 ? 'D-Day' : dday > 0 ? `D-${dday}` : `D+${Math.abs(dday)}`;
+                      const isOverdue = dday < 0;
                       return (
-                        <div key={t.id} title={t.title} className="flex items-center gap-1.5 text-xs font-medium text-indigo-800 dark:text-indigo-100 bg-indigo-100 dark:bg-indigo-900/60 px-2 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-700/80 w-full shadow-sm overflow-hidden">
-                          <span className="text-base font-black text-indigo-600 dark:text-indigo-400 shrink-0 leading-none">{ddayText}</span>
-                          <span className="truncate flex-1 text-left text-xs font-bold">{t.title}</span>
+                        <div key={t.id} title={t.title} className={`flex flex-col items-center gap-0.5 text-xs px-1.5 py-1.5 rounded-lg border w-full shadow-sm overflow-hidden ${isOverdue ? 'bg-rose-50 dark:bg-rose-900/30 border-rose-200 dark:border-rose-800/50' : 'bg-indigo-50 dark:bg-indigo-900/50 border-indigo-200 dark:border-indigo-700/80'}`}>
+                          <span className={`text-sm font-black leading-none ${isOverdue ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>
+                          <span className={`w-full text-center text-[10px] font-bold leading-tight line-clamp-2 break-keep ${isOverdue ? 'text-rose-800 dark:text-rose-200' : 'text-indigo-800 dark:text-indigo-200'}`}>{t.title}</span>
                         </div>
                       );
                     })}
