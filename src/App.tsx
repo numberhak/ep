@@ -656,7 +656,7 @@ function RecordsPage() {
                     <div className="text-slate-700 dark:text-slate-200 text-base whitespace-pre-wrap leading-relaxed font-medium">{rec.content}</div>
                   </div>
                 )) : (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500"><IconNotebook /><p className="mt-4 font-bold text-base">등록된 기록이 없습니다.</p></div>
+                  <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500"><IconNotebook size={40} /><p className="mt-4 font-bold text-base">등록된 기록이 없습니다.</p></div>
                 )}
               </div>
             </div>
@@ -999,6 +999,7 @@ function ManagePage() {
                     </button>
                   )}
                 </div>
+              )}
             </div>
             <div className="p-6 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
               <button onClick={() => { setSelectedItem(null); goToPage('records', { classId: selectedItem.classInfo.classId }); }} className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 text-sm font-bold hover:bg-indigo-50 px-4 py-2.5 rounded-xl transition-colors">
