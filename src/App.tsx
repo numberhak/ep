@@ -836,26 +836,42 @@ function ManagePage() {
                             );
                           } else {
                             const isReplace = data.item.event?.type === 'replace';
-                            const eventBgClass = isReplace ? 'bg-emerald-50/80 dark:bg-emerald-900/30' : 'bg-indigo-50/80 dark:bg-indigo-900/30';
-                            const eventBorderClass = isReplace 
-                              ? (isSelected ? 'border-l-[6px] border-l-emerald-500 border-y-transparent border-r-transparent shadow-md' : 'border border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 hover:border-emerald-400 dark:hover:border-emerald-600')
-                              : (isSelected ? 'border-l-[6px] border-l-indigo-500 border-y-transparent border-r-transparent shadow-md' : 'border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 hover:border-indigo-400 dark:hover:border-indigo-600');
-                            const eventTextClass = isReplace ? 'text-emerald-700 dark:text-emerald-400' : 'text-indigo-700 dark:text-indigo-400';
-                            const eventBadgeClass = isReplace ? 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-300' : 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300';
-                            const typeText = isReplace ? '내용변경' : '보강';
-
-                            return (
-                              <button key={idx} aria-label={`${data.classInfo.className} ${typeText} 일정: ${data.item.event?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left ${eventBgClass} p-2.5 rounded-lg text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${eventBorderClass}`}>
-                                <div className="flex justify-between items-start mb-1.5">
-                                  <span className={`font-black ${eventTextClass} opacity-90 flex items-center`}>
-                                    {data.classInfo.className}
-                                    <span className="ml-1 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
-                                  </span>
-                                  <span className={`text-[10px] ${eventBadgeClass} px-1.5 py-0.5 rounded font-bold`}>{typeText}</span>
-                                </div>
-                                <div className="font-bold text-gray-800 dark:text-gray-100 leading-snug truncate text-sm">{data.item.event?.title}</div>
-                              </button>
-                            );
+                            
+                            if (isReplace) {
+                              // 내용 변경: 정규 수업과 동일한 학급 고유 색상(style) 유지
+                              return (
+                                <button key={idx} aria-label={`${data.classInfo.className} 내용변경 일정: ${data.item.event?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left p-2.5 rounded-lg shadow-sm transition-all text-xs group focus:outline-none ${style.ring} focus-visible:ring-offset-1 ${style.bg} ${isSelected ? `border-l-[6px] ${style.leftBorder} border-y-transparent border-r-transparent shadow-md` : `border ${style.border} ${style.hover}`}`}>
+                                  <div className="flex justify-between items-start mb-1.5">
+                                    <span className={`font-black ${style.text} opacity-90 flex items-center`}>
+                                      {data.classInfo.className}
+                                      <span className="ml-1 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
+                                    </span>
+                                    <span className="text-[10px] bg-white/60 dark:bg-black/20 px-1.5 py-0.5 rounded font-bold dark:text-white/80">내용변경</span>
+                                  </div>
+                                  <div className="font-bold text-gray-800 dark:text-gray-100 leading-snug truncate text-sm">{data.item.event?.title}</div>
+                                </button>
+                              );
+                            } else {
+                              // 보강(extra): 보강임을 명확히 알 수 있도록 기존의 Indigo 색상 테마 사용
+                              const typeText = '보강';
+                              const eventBgClass = 'bg-indigo-50/80 dark:bg-indigo-900/30';
+                              const eventBorderClass = isSelected ? 'border-l-[6px] border-l-indigo-500 border-y-transparent border-r-transparent shadow-md' : 'border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 hover:border-indigo-400 dark:hover:border-indigo-600';
+                              const eventTextClass = 'text-indigo-700 dark:text-indigo-400';
+                              const eventBadgeClass = 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300';
+                        
+                              return (
+                                <button key={idx} aria-label={`${data.classInfo.className} ${typeText} 일정: ${data.item.event?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left ${eventBgClass} p-2.5 rounded-lg text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${eventBorderClass}`}>
+                                  <div className="flex justify-between items-start mb-1.5">
+                                    <span className={`font-black ${eventTextClass} opacity-90 flex items-center`}>
+                                      {data.classInfo.className}
+                                      <span className="ml-1 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
+                                    </span>
+                                    <span className={`text-[10px] ${eventBadgeClass} px-1.5 py-0.5 rounded font-bold`}>{typeText}</span>
+                                  </div>
+                                  <div className="font-bold text-gray-800 dark:text-gray-100 leading-snug truncate text-sm">{data.item.event?.title}</div>
+                                </button>
+                              );
+                            }
                           }
                         })
                       ) : null}
@@ -899,7 +915,7 @@ function ManagePage() {
                   <div className="p-5 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50 rounded-2xl space-y-4 animate-in fade-in zoom-in-95">
                     <div className="flex flex-col gap-2.5 border-b border-orange-200/50 dark:border-orange-800/50 pb-4">
                       <label className="flex items-center gap-2 text-sm font-bold text-orange-900 dark:text-orange-300 cursor-pointer">
-                        <input type="radio" checked={modifyType === 'replace'} onChange={() => setModifyType('replace')} className="w-4 h-4 text-orange-600 bg-white border-orange-300 focus:ring-orange-500" /> 내용 변경 (수행평가 등, 진도는 유지)
+                        <input type="radio" checked={modifyType === 'replace'} onChange={() => setModifyType('replace')} className="w-4 h-4 text-orange-600 bg-white border-orange-300 focus:ring-orange-500" /> 내용 변경 (수행평가 등, 진도 밀림)
                       </label>
                       <label className="flex items-center gap-2 text-sm font-bold text-orange-900 dark:text-orange-300 cursor-pointer">
                         <input type="radio" checked={modifyType === 'move'} onChange={() => setModifyType('move')} className="w-4 h-4 text-orange-600 bg-white border-orange-300 focus:ring-orange-500" /> 이동 (현재시간 빈칸 + 보강생성, 진도 밀림)
