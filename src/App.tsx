@@ -7,15 +7,19 @@ import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 // ==========================================
 // Firebase Initialization
 // ==========================================
-// @ts-ignore
-const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
-const firebaseConfig = firebaseConfigStr ? JSON.parse(firebaseConfigStr) : {};
-const isFirebaseEnabled = Object.keys(firebaseConfig).length > 0;
+const firebaseConfig = {
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER,
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID,
+};
+const isFirebaseEnabled = !!firebaseConfig.apiKey && !!firebaseConfig.projectId;
 const app = isFirebaseEnabled ? initializeApp(firebaseConfig) : null;
 const auth = app ? getAuth(app) : null;
 const db = app ? getFirestore(app) : null;
-// @ts-ignore
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const appId = firebaseConfig.projectId || 'default-app-id';
 
 // ==========================================
 // Local Storage Helper
