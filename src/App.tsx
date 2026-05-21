@@ -1481,28 +1481,23 @@ export default function App() {
   const [activePage, setActivePage] = useState<'manage' | 'plan' | 'settings' | 'records' | 'tasks'>('manage');
   const [pageParams, setPageParams] = useState<any>(null);
 
-  const [lessonsState, setLessonsState] = useState<Lesson[]>([]);
-  const [classesState, setClassesState] = useState<ClassSchedule[]>([]);
-  const [holidaysState, setHolidaysState] = useState<Holiday[]>([]);
-  const [eventsState, setEventsState] = useState<ClassEvent[]>([]);
-  const [recordsState, setRecordsState] = useState<ClassRecord[]>([]);
-  const [tasksState, setTasksState] = useState<Task[]>([]);
-  const [profileState, setProfileState] = useState<UserProfile>(DEFAULT_PROFILE);
-  const [menuOrderState, setMenuOrderState] = useState<string[]>(DEFAULT_MENU_ORDER);
+  // localStorage에서 즉시 읽어오는 lazy initializer 패턴
+  // (useEffect 타이밍 문제 없이 첫 렌더링부터 저장된 데이터 반영)
+  const [lessonsState, setLessonsState] = useState<Lesson[]>(() => loadFromLocal('lessons', MOCK_LESSONS));
+  const [classesState, setClassesState] = useState<ClassSchedule[]>(() => loadFromLocal('classes', MOCK_SCHEDULES));
+  const [holidaysState, setHolidaysState] = useState<Holiday[]>(() => loadFromLocal('holidays', MOCK_HOLIDAYS));
+  const [eventsState, setEventsState] = useState<ClassEvent[]>(() => loadFromLocal('events', []));
+  const [recordsState, setRecordsState] = useState<ClassRecord[]>(() => loadFromLocal('records', []));
+  const [tasksState, setTasksState] = useState<Task[]>(() => loadFromLocal('tasks', MOCK_TASKS));
+  const [profileState, setProfileState] = useState<UserProfile>(() => loadFromLocal('profile', DEFAULT_PROFILE));
+  const [menuOrderState, setMenuOrderState] = useState<string[]>(() => loadFromLocal('menuOrder', DEFAULT_MENU_ORDER));
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   useEffect(() => {
     const initAuth = async () => {
       try {
         if (!isFirebaseEnabled) {
-           setLessonsState(loadFromLocal('lessons', MOCK_LESSONS));
-           setClassesState(loadFromLocal('classes', MOCK_SCHEDULES));
-           setHolidaysState(loadFromLocal('holidays', MOCK_HOLIDAYS));
-           setEventsState(loadFromLocal('events', []));
-           setRecordsState(loadFromLocal('records', []));
-           setTasksState(loadFromLocal('tasks', MOCK_TASKS));
-           setProfileState(loadFromLocal('profile', DEFAULT_PROFILE));
-           setMenuOrderState(loadFromLocal('menuOrder', DEFAULT_MENU_ORDER));
+           // lazy initializer로 이미 localStorage에서 읽었으므로 바로 로드 완료 처리
            setIsLoaded(true);
            return;
         }
@@ -1515,14 +1510,7 @@ export default function App() {
           await signInAnonymously(auth!);
         }
       } catch (err) {
-        setLessonsState(loadFromLocal('lessons', MOCK_LESSONS));
-        setClassesState(loadFromLocal('classes', MOCK_SCHEDULES));
-        setHolidaysState(loadFromLocal('holidays', MOCK_HOLIDAYS));
-        setEventsState(loadFromLocal('events', []));
-        setRecordsState(loadFromLocal('records', []));
-        setTasksState(loadFromLocal('tasks', MOCK_TASKS));
-        setProfileState(loadFromLocal('profile', DEFAULT_PROFILE));
-        setMenuOrderState(loadFromLocal('menuOrder', DEFAULT_MENU_ORDER));
+        // lazy initializer로 이미 localStorage 데이터가 state에 있으므로 로드 완료만 처리
         setIsLoaded(true);
       }
     };
