@@ -106,7 +106,6 @@ function generateClassLessonSchedule(
   classEvents.forEach(e => eventMap.set(`${e.date}-${e.period}`, e));
 
   // exception(결강/이동 출발지)만 정규 슬롯을 빈칸으로 처리합니다.
-  // replace(내용 변경)는 정규 슬롯을 대체하여 표시하되 lessonIndex는 소비(진도는 진행됨)합니다.
   const exceptionKeys = new Set(
     classEvents.filter(e => e.type === 'exception').map(e => `${e.date}-${e.period}`)
   );
@@ -142,14 +141,9 @@ function generateClassLessonSchedule(
         if (classEvent) {
           if (classEvent.type === 'exception') {
             // 결강/이동 출발지: 빈칸 처리. lessonIndex 증가 없음 → 해당 차시가 뒤로 밀림
-            // scheduledItems에 아무것도 추가하지 않음
           } else if (classEvent.type === 'replace') {
-            // 내용 변경: 해당 슬롯에 이벤트 제목으로 표시하되 lessonIndex는 소비 (진도는 진행됨)
-            // 즉, '수행평가'로 바꿔도 그 차시가 진행된 것으로 처리하여 다음 차시가 밀리지 않음
-            if (lessonIndex < sortedLessons.length) {
-              scheduledItems.push({ date: dateStr, period, type: 'event', event: classEvent, classId: schedule.classId });
-              lessonIndex++;
-            }
+            // 내용 변경: 해당 슬롯에 변경된 일정을 표시하고, lessonIndex를 증가시키지 않음 (진도 밀림)
+            scheduledItems.push({ date: dateStr, period, type: 'event', event: classEvent, classId: schedule.classId });
           } else if (classEvent.type === 'extra') {
             // 보강(이동 도착지): 진도를 나감 → lessonIndex 소비
             if (lessonIndex < sortedLessons.length) {
@@ -709,38 +703,38 @@ function ManagePage() {
   const dayNames = ['월', '화', '수', '목', '금'];
 
   const handleModifySchedule = async () => {
-    if (!selectedItem || selectedItem.item.type !== 'lesson') return;
+    if (!selectedItem) return;
+
     const { date, period, classId } = selectedItem.item;
-    const newEvents = [...events];
-    
+    let filteredEvents = [...events];
+
+    // 기존 이벤트(내용 변경 등)를 '다시 수정'하는 경우 기존 이벤트 데이터 삭제
+    if (selectedItem.item.type === 'event' && selectedItem.item.event) {
+      filteredEvents = filteredEvents.filter(e => e.id !== selectedItem.item.event!.id);
+    }
+
     if (modifyType === 'cancel' || modifyType === 'move') { 
-      // 결강(빈칸) 처리 -> exception 타입으로 등록
-      newEvents.push({ id: `e-${Date.now()}-1`, classId, date, period, title: modifyType === 'move' ? '시간표 변경 (이동)' : '휴강', type: 'exception' }); 
+      filteredEvents.push({ id: `e-${Date.now()}-1`, classId, date, period, title: modifyType === 'move' ? '시간표 변경 (이동)' : '휴강', type: 'exception' }); 
     }
     if (modifyType === 'move') {
       if (!targetDate) { addToast('보강 날짜를 선택해주세요.'); return; }
-      newEvents.push({ id: `e-${Date.now()}-2`, classId, date: targetDate, period: targetPeriod, title: '시간표 변경 (보강)', type: 'extra' });
+      filteredEvents.push({ id: `e-${Date.now()}-2`, classId, date: targetDate, period: targetPeriod, title: '시간표 변경 (보강)', type: 'extra' });
     }
     if (modifyType === 'replace') {
       if (!replaceTitle.trim()) { addToast('변경할 수업 내용을 입력해주세요.'); return; }
-      // 기존 replace 이벤트가 있으면 제거 후 새로 등록
-      const filteredEvents = newEvents.filter(e => !(e.classId === classId && e.date === date && e.period === period && e.type === 'replace'));
+      // 중복 방지: 해당 슬롯에 이미 있는 다른 replace 이벤트 제거
+      filteredEvents = filteredEvents.filter(e => !(e.classId === classId && e.date === date && e.period === period && e.type === 'replace'));
       filteredEvents.push({ id: `e-${Date.now()}`, classId, date, period, title: replaceTitle, type: 'replace' });
-      try { 
-        await updateEvents(filteredEvents); 
-        setSelectedItem(null); 
-        setIsModifying(false); 
-        addToast('수업 내용이 변경되었습니다.', 'success'); 
-      } catch { addToast('일정 변경에 실패했습니다.'); }
-      return;
     }
 
     try { 
-      await updateEvents(newEvents); 
+      await updateEvents(filteredEvents); 
       setSelectedItem(null); 
       setIsModifying(false); 
       addToast('일정 변경이 적용되었습니다.', 'success'); 
-    } catch { addToast('일정 변경에 실패했습니다.'); }
+    } catch { 
+      addToast('일정 변경에 실패했습니다.'); 
+    }
   };
 
   const handleDeleteEvent = async (eventId: string) => {
@@ -927,7 +921,7 @@ function ManagePage() {
                           placeholder="예: 수행평가, 학교 행사 등"
                           className="w-full border border-orange-300 dark:border-orange-700 p-3 text-sm font-bold rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
                         />
-                        <p className="text-[11px] text-orange-600 dark:text-orange-400 mt-1.5 font-bold">💡 진도는 그대로 유지됩니다. (이 차시가 진행된 것으로 처리)</p>
+                        <p className="text-[11px] text-orange-600 dark:text-orange-400 mt-1.5 font-bold">⚠️ 기존 차시는 다음 수업으로 밀립니다.</p>
                       </div>
                     )}
 
