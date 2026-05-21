@@ -1644,21 +1644,34 @@ export default function App() {
     <ToastProvider>
       <AppContext.Provider value={contextValue}>
 
-        {/* ── 데스크탑 레이아웃 (lg 이상) ── */}
-        <div className="hidden lg:flex h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 overflow-hidden selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
-          <aside className="w-52 lg:w-52 xl:w-64 bg-slate-900 flex flex-col z-20 shrink-0 border-r border-slate-800 shadow-xl">
-            <div className="p-6 pb-2">
-              <div className="flex items-center gap-3 text-white mb-2">
-                <div className="p-2 bg-indigo-500 rounded-xl shadow-lg"><IconCalendar /></div>
-                <span className="text-xl font-black tracking-tight">에듀플래너</span>
+        {/* ── 통합 레이아웃: 항상 사이드바, 좁은 화면에서 아이콘 전용으로 축소 ── */}
+        <div className="flex h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 overflow-hidden selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
+          {/* 사이드바: 항상 표시. 600px 미만(스마트폰)에서는 숨기고 하단 탭바 사용 */}
+          <aside
+            className="bg-slate-900 flex flex-col z-20 shrink-0 border-r border-slate-800 shadow-xl transition-all duration-300"
+            style={{ width: 'clamp(56px, 15vw, 256px)' }}
+          >
+            {/* 로고: 넓을 때만 텍스트 표시 */}
+            <div className="p-3 pb-2 flex flex-col items-center" style={{ padding: 'clamp(12px, 2vw, 24px)' }}>
+              <div className="flex items-center gap-3 text-white mb-1 w-full overflow-hidden">
+                <div className="p-2 bg-indigo-500 rounded-xl shadow-lg shrink-0"><IconCalendar /></div>
+                <span className="text-lg font-black tracking-tight truncate hidden" style={{ display: 'var(--sidebar-text-display, none)' }}>에듀플래너</span>
               </div>
-              <div className="text-[10px] font-bold text-slate-500 px-1 uppercase tracking-widest flex items-center gap-2">
+              <div
+                className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2 w-full overflow-hidden"
+                style={{ display: 'var(--sidebar-text-display, none)' }}
+              >
                 Smart Scheduler
-                <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`} title={isFirebaseEnabled ? "클라우드 연동됨" : "로컬 스토리지 보관됨"}></span>
+                <span className={`w-2 h-2 rounded-full animate-pulse shrink-0 ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`} title={isFirebaseEnabled ? "클라우드 연동됨" : "로컬 스토리지 보관됨"}></span>
               </div>
+              {/* 좁을 때 상태 점만 표시 */}
+              <span
+                className={`w-2 h-2 rounded-full animate-pulse mt-1 ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`}
+                style={{ display: 'var(--sidebar-dot-display, block)' }}
+              ></span>
             </div>
 
-            <nav className="flex-1 px-4 space-y-2 mt-6 overflow-y-auto scrollbar-hide">
+            <nav className="flex-1 px-2 space-y-1 mt-2 overflow-y-auto scrollbar-hide">
               {menuOrderState.map((itemId, index) => {
                 const item = NAV_ITEMS_CONFIG[itemId];
                 if (!item) return null;
@@ -1671,24 +1684,34 @@ export default function App() {
                     onDrop={(e) => handleNavDrop(e, index)}
                     className={`cursor-grab active:cursor-grabbing transition-opacity ${draggedNavIdx === index ? 'opacity-30' : 'opacity-100'}`}
                   >
-                    <button onClick={() => { setActivePage(item.id as any); setPageParams(null); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-200 focus:outline-none ${activePage === item.id ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-                      <div className="opacity-20 hover:opacity-100 transition-opacity px-1 flex flex-col gap-[3px] items-center justify-center shrink-0" aria-hidden="true" title="드래그하여 순서 변경">
-                        <span className="w-1 h-1 bg-current rounded-full"></span><span className="w-1 h-1 bg-current rounded-full"></span><span className="w-1 h-1 bg-current rounded-full"></span>
-                      </div>
-                      {item.icon}
-                      <span className="font-bold text-sm">{item.label}</span>
+                    <button
+                      title={item.label}
+                      onClick={() => { setActivePage(item.id as any); setPageParams(null); }}
+                      className={`w-full flex items-center justify-center gap-3 px-2 py-3 rounded-xl transition-all duration-200 focus:outline-none overflow-hidden ${activePage === item.id ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                      style={{ justifyContent: 'var(--sidebar-btn-justify, center)' }}
+                    >
+                      <span className="shrink-0">{item.icon}</span>
+                      <span
+                        className="font-bold text-sm truncate"
+                        style={{ display: 'var(--sidebar-text-display, none)' }}
+                      >{item.label}</span>
                     </button>
                   </div>
                 );
               })}
             </nav>
 
-            <div className="p-4">
-              <button aria-label="프로필 설정 수정" onClick={() => setIsProfileModalOpen(true)} className="w-full text-left bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 flex items-center gap-3 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 group">
-                <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-lg shrink-0 uppercase shadow-inner">
+            <div className="p-2" style={{ padding: 'clamp(8px, 1.5vw, 16px)' }}>
+              <button
+                aria-label="프로필 설정 수정"
+                onClick={() => setIsProfileModalOpen(true)}
+                className="w-full text-left bg-slate-800/50 rounded-2xl border border-slate-700/50 flex items-center gap-3 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 group overflow-hidden"
+                style={{ padding: 'clamp(8px, 1.5vw, 16px)' }}
+              >
+                <div className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-base shrink-0 uppercase shadow-inner">
                   {profileState.name.charAt(0) || 'U'}
                 </div>
-                <div className="overflow-hidden flex-1">
+                <div className="overflow-hidden flex-1" style={{ display: 'var(--sidebar-text-display, none)' }}>
                   <div className="text-white text-sm font-bold truncate group-hover:text-indigo-300 transition-colors flex items-center justify-between">
                     <span className="truncate">{profileState.name}</span>
                     <span className="opacity-0 group-hover:opacity-100 text-xs shrink-0 ml-1">✏️</span>
@@ -1699,6 +1722,23 @@ export default function App() {
             </div>
           </aside>
 
+          {/* CSS 변수로 사이드바 텍스트/아이콘 표시 전환 */}
+          <style>{`
+            aside {
+              --sidebar-text-display: none;
+              --sidebar-dot-display: block;
+              --sidebar-btn-justify: center;
+            }
+            @container (min-width: 0px) { aside { } }
+            @media (min-width: 600px) {
+              aside {
+                --sidebar-text-display: block;
+                --sidebar-dot-display: none;
+                --sidebar-btn-justify: flex-start;
+              }
+            }
+          `}</style>
+
           <main className="flex-1 overflow-hidden relative bg-white dark:bg-slate-900 min-w-0">
             <div className="max-w-[1400px] mx-auto h-full shadow-2xl bg-white dark:bg-slate-900 border-l border-r border-slate-100/50 dark:border-slate-800/50">
               {activePage === 'plan'     && <LessonPlanPage />}
@@ -1708,48 +1748,6 @@ export default function App() {
               {activePage === 'tasks'    && <TasksPage />}
             </div>
           </main>
-        </div>
-
-        {/* ── 모바일/태블릿 레이아웃 (lg 미만) ── */}
-        <div className="flex lg:hidden flex-col h-screen bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
-          <header className="bg-slate-900 px-5 py-4 flex items-center justify-between shrink-0 shadow-md z-20">
-            <div className="flex items-center gap-2.5 text-white">
-              <div className="p-1.5 bg-indigo-500 rounded-lg"><IconCalendar /></div>
-              <span className="text-lg font-black tracking-tight">에듀플래너</span>
-              <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`}></span>
-            </div>
-            <button aria-label="프로필 설정 수정" onClick={() => setIsProfileModalOpen(true)} className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-sm uppercase focus:outline-none shadow-inner">
-              {profileState.name.charAt(0) || 'U'}
-            </button>
-          </header>
-
-          <main className="flex-1 overflow-hidden relative bg-gray-50 dark:bg-slate-900 min-w-0">
-            {activePage === 'plan'     && <LessonPlanPage />}
-            {activePage === 'settings' && <SettingsPage />}
-            {activePage === 'manage'   && <ManagePage />}
-            {activePage === 'records'  && <RecordsPage />}
-            {activePage === 'tasks'    && <TasksPage />}
-          </main>
-
-          <nav className="bg-white dark:bg-slate-900 border-t border-gray-200 dark:border-slate-800 shrink-0 flex px-2 pb-safe pt-1 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-            {menuOrderState.map((itemId) => {
-              const item = NAV_ITEMS_CONFIG[itemId];
-              if (!item) return null;
-              const isActive = activePage === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => { setActivePage(item.id as any); setPageParams(null); }}
-                  className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1.5 transition-colors focus:outline-none ${isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
-                >
-                  <div className={`transition-transform duration-200 ${isActive ? 'scale-110 -translate-y-0.5' : ''}`}>
-                    {item.icon}
-                  </div>
-                  <span className={`text-[10px] leading-none ${isActive ? 'font-black' : 'font-bold'}`}>{item.label}</span>
-                </button>
-              );
-            })}
-          </nav>
         </div>
 
         {isProfileModalOpen && (
