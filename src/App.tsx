@@ -111,7 +111,6 @@ function generateClassLessonSchedule(
   const eventMap = new Map<string, ClassEvent>();
   classEvents.forEach(e => eventMap.set(`${e.date}-${e.period}`, e));
 
-  // exception(결강/이동 출발지)만 정규 슬롯을 빈칸으로 처리합니다.
   const exceptionKeys = new Set(
     classEvents.filter(e => e.type === 'exception').map(e => `${e.date}-${e.period}`)
   );
@@ -146,19 +145,15 @@ function generateClassLessonSchedule(
 
         if (classEvent) {
           if (classEvent.type === 'exception') {
-            // 결강/이동 출발지: 빈칸 처리. lessonIndex 증가 없음 → 해당 차시가 뒤로 밀림
           } else if (classEvent.type === 'replace') {
-            // 내용 변경: 해당 슬롯에 변경된 일정을 표시하고, lessonIndex를 증가시키지 않음 (진도 밀림)
             scheduledItems.push({ date: dateStr, period, type: 'event', event: classEvent, classId: schedule.classId });
           } else if (classEvent.type === 'extra') {
-            // 보강(이동 도착지): 진도를 나감 → lessonIndex 소비
             if (lessonIndex < sortedLessons.length) {
               scheduledItems.push({ date: dateStr, period, type: 'lesson', lesson: sortedLessons[lessonIndex], classId: schedule.classId });
               lessonIndex++;
             }
           }
         } else if (baseSlots.includes(period) && !exceptionKeys.has(eventKey)) {
-          // 정상 수업
           if (lessonIndex < sortedLessons.length) {
             scheduledItems.push({ date: dateStr, period, type: 'lesson', lesson: sortedLessons[lessonIndex], classId: schedule.classId });
             lessonIndex++;
@@ -257,6 +252,8 @@ const IconSettings   = () => <svg className="w-5 h-5" fill="none" stroke="curren
 const IconBook       = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>;
 const IconNotebook   = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>;
 const IconChecklist  = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>;
+const IconLeft       = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>;
+const IconRight      = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>;
 
 // ==========================================
 // LessonPlanPage
@@ -782,12 +779,10 @@ function ManagePage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const todayColRef = useRef<HTMLDivElement>(null);
 
-  // 오늘 날짜가 이번 주에 포함되면 해당 열이 보이도록 가로 스크롤
   useEffect(() => {
     const container = scrollContainerRef.current;
     const todayCol = todayColRef.current;
     if (!container || !todayCol) return;
-    // 교시 열(60px) + 여유 16px을 빼서 오늘 열이 왼쪽에 깔끔하게 붙도록
     const colLeft = todayCol.offsetLeft;
     container.scrollTo({ left: Math.max(0, colLeft - 76), behavior: 'smooth' });
   }, [currentWeekStart]);
@@ -818,7 +813,6 @@ function ManagePage() {
     const { date, period, classId } = selectedItem.item;
     let filteredEvents = [...events];
 
-    // 기존 이벤트(내용 변경 등)를 '다시 수정'하는 경우 기존 이벤트 데이터 삭제
     if (selectedItem.item.type === 'event' && selectedItem.item.event) {
       filteredEvents = filteredEvents.filter(e => e.id !== selectedItem.item.event!.id);
     }
@@ -832,7 +826,6 @@ function ManagePage() {
     }
     if (modifyType === 'replace') {
       if (!replaceTitle.trim()) { addToast('변경할 수업 내용을 입력해주세요.'); return; }
-      // 중복 방지: 해당 슬롯에 이미 있는 다른 replace 이벤트 제거
       filteredEvents = filteredEvents.filter(e => !(e.classId === classId && e.date === date && e.period === period && e.type === 'replace'));
       filteredEvents.push({ id: `e-${Date.now()}`, classId, date, period, title: replaceTitle, type: 'replace' });
     }
@@ -851,14 +844,12 @@ function ManagePage() {
     try { await updateEvents(events.filter(e => e.id !== eventId)); setSelectedItem(null); setIsModifying(false); addToast('변경 사항이 취소되었습니다.', 'success'); } catch { addToast('취소 처리에 실패했습니다.'); }
   };
 
-  // 마감일 없는 미완료 업무: 주간 진도표 상단 고정 표시
   const noDeadlineTasks = tasks.filter(t => !t.completed && !t.date);
-  // 마감일 있는 미완료 업무: 이번 주 전체에 걸쳐 D-n 표시 (마감일이 이번 주이거나 아직 안 지난 경우)
   const deadlinedWeekTasks = tasks.filter(t => !t.completed && t.date);
 
   return (
     <div className="p-4 md:p-6 h-full flex flex-col animate-in fade-in duration-500 bg-slate-50/50 dark:bg-slate-900/50">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 shrink-0">
         <div className="flex items-center gap-3 w-full md:w-auto">
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white tracking-tight shrink-0">주간 진도표</h1>
           <select aria-label="진도표 학급 선택" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)} className="w-full md:w-auto text-base md:text-sm bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-white px-4 py-2.5 md:py-1.5 rounded-lg font-bold shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -866,16 +857,11 @@ function ManagePage() {
             {classes.map(c => <option key={c.classId} value={c.classId}>{c.className}</option>)}
           </select>
         </div>
-        <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1.5 md:p-1 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 text-sm w-full md:w-auto justify-between md:justify-start">
-          <button aria-label="이전 주" onClick={() => setCurrentWeekStart(d => dateUtils.addDays(d, -7))} className="px-4 md:px-3 py-2 md:py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg font-bold text-slate-500 dark:text-slate-300">이전</button>
-          <span className="px-4 font-bold text-gray-700 dark:text-slate-200 min-w-[140px] text-center">{dateUtils.formatDate(daysInWeek[0])} ~ {dateUtils.formatDate(daysInWeek[4])}</span>
-          <button aria-label="다음 주" onClick={() => setCurrentWeekStart(d => dateUtils.addDays(d, 7))} className="px-4 md:px-3 py-2 md:py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg font-bold text-slate-500 dark:text-slate-300">다음</button>
-        </div>
       </header>
 
-      {/* 진행중 업무 배너: 마감일 없는 업무(키워드) + 마감일 있는 미완료 업무(D-n) */}
+      {/* 진행중 업무 배너 */}
       {(noDeadlineTasks.length > 0 || deadlinedWeekTasks.length > 0) && (
-        <div className="mb-3 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-900/50 rounded-xl px-4 py-3 shadow-sm flex flex-wrap gap-2 items-center">
+        <div className="mb-3 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-900/50 rounded-xl px-4 py-3 shadow-sm flex flex-wrap gap-2 items-center shrink-0">
           <span className="text-[11px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest shrink-0 mr-1">진행중</span>
           {noDeadlineTasks.map(t => (
             <span key={t.id} title={t.title} className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 max-w-[180px]">
@@ -919,7 +905,6 @@ function ManagePage() {
               const dayHolidays = holidays.filter(h => h.date === dateStr && h.isHoliday !== false);
               const dayEvents = holidays.filter(h => h.date === dateStr && h.isHoliday === false);
               const isHolidayDay = dayHolidays.length > 0;
-              // 마감일 당일에만 업무 표시
               const dayTasksForCell = tasks.filter(t => !t.completed && t.date && t.date === dateStr);
 
               return (
@@ -928,7 +913,19 @@ function ManagePage() {
                   ref={isToday ? todayColRef : undefined}
                   className={`p-2 flex flex-col items-center border-r border-gray-200 dark:border-slate-700 last:border-0 ${isHolidayDay ? 'bg-rose-50/80 dark:bg-rose-900/20' : isToday ? 'bg-indigo-50/80 dark:bg-indigo-900/20' : ''}`}
                 >
-                  <div className={`text-xs font-bold ${isToday ? 'text-indigo-500 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400'}`}>{dayNames[i]}</div>
+                  <div className={`text-xs font-bold flex items-center justify-center gap-1 w-full ${isToday ? 'text-indigo-500 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                    {i === 0 && (
+                      <button onClick={() => setCurrentWeekStart(d => dateUtils.addDays(d, -7))} className="p-1 -ml-2 text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 focus:outline-none" title="이전 주">
+                        <IconLeft />
+                      </button>
+                    )}
+                    {dayNames[i]}
+                    {i === 4 && (
+                      <button onClick={() => setCurrentWeekStart(d => dateUtils.addDays(d, 7))} className="p-1 -mr-2 text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 focus:outline-none" title="다음 주">
+                        <IconRight />
+                      </button>
+                    )}
+                  </div>
                   <div className={`text-base md:text-xl font-black leading-tight ${isHolidayDay ? 'text-rose-500' : isToday ? 'text-white bg-indigo-500 rounded-full w-8 h-8 flex items-center justify-center text-base mt-0.5' : 'text-slate-800 dark:text-slate-200'}`}>{date.getDate()}</div>
                   {dayHolidays.map(h => <div key={h.id} className="text-[10px] font-bold text-rose-500 mt-0.5 text-center break-keep leading-tight">{h.title}</div>)}
                   {dayEvents.map(e => <div key={e.id} className="text-[10px] font-bold text-blue-600 dark:text-blue-400 mt-1 text-center bg-blue-50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded-md break-keep leading-tight">{e.title}</div>)}
@@ -962,7 +959,6 @@ function ManagePage() {
                   const isHoliday = holidays.some(h => h.date === dateStr && h.isHoliday !== false);
                   const cellItems = scheduleMap.get(`${dateStr}-${period}`) || [];
 
-                  // 정규 슬롯 여부 판단 (음영 표시용)
                   let isTargetSlot = false;
                   if (selectedClassId !== 'all') {
                     isTargetSlot = classes.find(c => c.classId === selectedClassId)?.weeklySlots.some(s => s.dayOfWeek === date.getDay() && s.period === period) || false;
@@ -997,7 +993,6 @@ function ManagePage() {
                             const isReplace = data.item.event?.type === 'replace';
                             
                             if (isReplace) {
-                              // 내용 변경: 정규 수업과 동일한 학급 고유 색상(style) 유지
                               return (
                                 <button key={idx} aria-label={`${data.classInfo.className} 내용변경 일정: ${data.item.event?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left p-2.5 rounded-lg shadow-sm transition-all text-xs group focus:outline-none ${style.ring} focus-visible:ring-offset-1 ${style.bg} ${isSelected ? `border-l-[6px] ${style.leftBorder} border-y-transparent border-r-transparent shadow-md` : `border ${style.border} ${style.hover}`}`}>
                                   <div className="flex justify-between items-start mb-1.5">
@@ -1011,7 +1006,6 @@ function ManagePage() {
                                 </button>
                               );
                             } else {
-                              // 보강(extra): 보강임을 명확히 알 수 있도록 기존의 Indigo 색상 테마 사용
                               const typeText = '보강';
                               const eventBgClass = 'bg-indigo-50/80 dark:bg-indigo-900/30';
                               const eventBorderClass = isSelected ? 'border-l-[6px] border-l-indigo-500 border-y-transparent border-r-transparent shadow-md' : 'border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 hover:border-indigo-400 dark:hover:border-indigo-600';
@@ -1040,6 +1034,32 @@ function ManagePage() {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* 하단 주간 이동 배너 */}
+      <div className="mt-4 p-4 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
+        <div className="text-sm font-bold text-gray-700 dark:text-gray-300">
+          현재 주간: {dateUtils.formatDate(daysInWeek[0])} ~ {dateUtils.formatDate(daysInWeek[4])}
+        </div>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <input
+            type="date"
+            aria-label="이동할 주간 선택"
+            value={dateUtils.formatDate(currentWeekStart)}
+            onChange={(e) => {
+              if (e.target.value) {
+                setCurrentWeekStart(dateUtils.getStartOfWeek(e.target.value));
+              }
+            }}
+            className="w-full sm:w-auto border border-gray-300 dark:border-slate-600 p-2.5 rounded-xl text-sm font-bold bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <button
+            onClick={() => setCurrentWeekStart(dateUtils.getStartOfWeek(dateUtils.formatDate(new Date())))}
+            className="px-4 py-2.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded-xl text-sm font-bold hover:bg-indigo-200 whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            이번 주로
+          </button>
         </div>
       </div>
 
@@ -1130,7 +1150,6 @@ function ManagePage() {
               ) : (
                 <div className="space-y-3">
                   {selectedItem.item.event?.type === 'replace' ? (
-                    // 내용 변경된 슬롯: 다시 수정하거나 원상복구 선택 가능
                     isModifying ? (
                       <div className="p-5 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50 rounded-2xl space-y-4 animate-in fade-in zoom-in-95">
                         <label className="block text-xs font-black text-orange-700 dark:text-orange-400 mb-2">수업 내용 다시 변경</label>
@@ -1162,7 +1181,6 @@ function ManagePage() {
                       </div>
                     )
                   ) : (
-                    // 보강 등 기타 이벤트: 삭제만 가능
                     <button onClick={() => handleDeleteEvent(selectedItem.item.event!.id)} className="w-full py-4 bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 font-bold text-sm rounded-2xl hover:bg-rose-100 border border-rose-200 dark:border-rose-800 transition-colors flex items-center justify-center gap-2">
                       ✕ 이 일정 변경사항 취소 (원상복구)
                     </button>
@@ -1636,8 +1654,6 @@ export default function App() {
   const [activePage, setActivePage] = useState<'manage' | 'plan' | 'settings' | 'records' | 'tasks'>('manage');
   const [pageParams, setPageParams] = useState<any>(null);
 
-  // localStorage에서 즉시 읽어오는 lazy initializer 패턴
-  // (useEffect 타이밍 문제 없이 첫 렌더링부터 저장된 데이터 반영)
   const [lessonsState, setLessonsState] = useState<Lesson[]>(() => loadFromLocal('lessons', MOCK_LESSONS));
   const [classesState, setClassesState] = useState<ClassSchedule[]>(() => loadFromLocal('classes', MOCK_SCHEDULES));
   const [holidaysState, setHolidaysState] = useState<Holiday[]>(() => loadFromLocal('holidays', MOCK_HOLIDAYS));
@@ -1649,21 +1665,20 @@ export default function App() {
   const [scoreLogsState, setScoreLogsState] = useState<ScoreLog[]>(() => loadFromLocal('scoreLogs', []));
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
-  // 창 너비 기반 레이아웃 분기 (CSS/Tailwind breakpoint 우회)
+  // 창 너비 기반 레이아웃 분기 (기준점 800으로 수정 - 패드 화면분할 지원 강화)
   const [windowWidth, setWindowWidth] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 1024);
   useEffect(() => {
     const onResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  const isSidebarLayout = windowWidth >= 600;
+  const isSidebarLayout = windowWidth >= 800; 
   const sidebarWidth = Math.min(256, Math.max(56, Math.round(windowWidth * 0.18)));
 
   useEffect(() => {
     const initAuth = async () => {
       try {
         if (!isFirebaseEnabled) {
-           // lazy initializer로 이미 localStorage에서 읽었으므로 바로 로드 완료 처리
            setIsLoaded(true);
            return;
         }
@@ -1676,7 +1691,6 @@ export default function App() {
           await signInAnonymously(auth!);
         }
       } catch (err) {
-        // lazy initializer로 이미 localStorage 데이터가 state에 있으므로 로드 완료만 처리
         setIsLoaded(true);
       }
     };
@@ -1770,7 +1784,7 @@ export default function App() {
       <AppContext.Provider value={contextValue}>
 
         {isSidebarLayout ? (
-          /* ── 사이드바 레이아웃 (windowWidth >= 600) ── */
+          /* ── 사이드바 레이아웃 (windowWidth >= 800) ── */
           <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }} className="bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
             <aside style={{ width: `${sidebarWidth}px`, minWidth: `${sidebarWidth}px`, maxWidth: `${sidebarWidth}px`, display: 'flex', flexDirection: 'column' }} className="bg-slate-900 z-20 shrink-0 border-r border-slate-800 shadow-xl">
               <div className="p-5 pb-2">
@@ -1855,7 +1869,7 @@ export default function App() {
             </main>
           </div>
         ) : (
-          /* ── 하단 탭바 레이아웃 (windowWidth < 600) ── */
+          /* ── 하단 탭바 레이아웃 (windowWidth < 800) ── */
           <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }} className="bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
             <header className="bg-slate-900 px-5 py-4 flex items-center justify-between shrink-0 shadow-md z-20">
               <div className="flex items-center gap-2.5 text-white">
