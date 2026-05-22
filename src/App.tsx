@@ -48,6 +48,8 @@ export interface ClassRecord { id: string; classId: string; date: string; conten
 export interface UserProfile { name: string; subject: string; }
 export interface Task { id: string; title: string; date?: string; completed: boolean; }
 
+export interface ScoreLog { id: string; classId: string; date: string; time: string; type: 'class' | 'group'; groupIndex?: number; amount: number; label: string; }
+
 export interface ScheduledItem {
   date: string; period: number; type: 'lesson' | 'event';
   lesson?: Lesson; event?: ClassEvent; classId: string;
@@ -201,6 +203,7 @@ interface AppContextType {
   tasks: Task[];           updateTasks: (data: Task[]) => Promise<void>;
   profile: UserProfile;    updateProfile: (data: UserProfile) => Promise<void>;
   menuOrder: string[];     updateMenuOrder: (data: string[]) => Promise<void>;
+  scoreLogs: ScoreLog[];   updateScoreLogs: (data: ScoreLog[]) => Promise<void>;
   goToPage: (page: 'manage' | 'plan' | 'settings' | 'records' | 'tasks', params?: any) => void;
   pageParams: any;
 }
@@ -538,13 +541,14 @@ function ScoreCard({ title, score, onUpdate, colorStyle }: { title: string; scor
 }
 
 function RecordsPage() {
-  const { classes, updateClasses, records, updateRecords, pageParams } = useContext(AppContext)!;
+  const { classes, updateClasses, records, updateRecords, scoreLogs, updateScoreLogs, pageParams } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
 
   const [selectedClassId, setSelectedClassId] = useState<string>(pageParams?.classId || (classes[0]?.classId || ''));
   const [newDate, setNewDate] = useState(dateUtils.formatDate(new Date()));
   const [newContent, setNewContent] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'records' | 'scorelog'>('records');
 
   const [exportStartDate, setExportStartDate] = useState(dateUtils.formatDate(dateUtils.addDays(new Date(), -30)));
   const [exportEndDate, setExportEndDate] = useState(dateUtils.formatDate(new Date()));
@@ -553,6 +557,7 @@ function RecordsPage() {
 
   const activeClass = classes.find(c => c.classId === selectedClassId);
   const classRecords = records.filter(r => r.classId === selectedClassId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const classScoreLogs = scoreLogs.filter(l => l.classId === selectedClassId).sort((a, b) => `${b.date}${b.time}` < `${a.date}${a.time}` ? -1 : 1);
 
   const handleSave = async () => {
     if (!newContent.trim() || !selectedClassId) return;
@@ -566,6 +571,19 @@ function RecordsPage() {
 
   const handleUpdateScore = async (type: 'class' | 'group', amount: number, index?: number) => {
     if (!activeClass) return;
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    const label = type === 'class' ? '학급 전체' : `${(index ?? 0) + 1}모둠`;
+    const newLog: ScoreLog = {
+      id: `sl-${Date.now()}`,
+      classId: activeClass.classId,
+      date: dateUtils.formatDate(now),
+      time: timeStr,
+      type,
+      groupIndex: index,
+      amount,
+      label,
+    };
     const updatedClasses = classes.map(c => {
       if (c.classId !== activeClass.classId) return c;
       const currentClassScore = c.classScore ?? 0;
@@ -578,7 +596,10 @@ function RecordsPage() {
       }
       return c;
     });
-    try { await updateClasses(updatedClasses); } catch { addToast('점수 저장에 실패했습니다.'); }
+    try {
+      await updateClasses(updatedClasses);
+      await updateScoreLogs([newLog, ...scoreLogs]);
+    } catch { addToast('점수 저장에 실패했습니다.'); }
   };
 
   const handleExportCSV = () => {
@@ -615,6 +636,7 @@ function RecordsPage() {
 
       {activeClass ? (
         <div className="flex-1 flex flex-col min-h-0 gap-4 md:gap-6 pb-4 md:pb-0">
+          {/* 점수 카드 */}
           <div className="flex gap-4 overflow-x-auto pb-4 shrink-0 scrollbar-hide snap-x md:snap-none">
             <ScoreCard title="🏅 학급 전체 점수" score={activeClass.classScore ?? 0} onUpdate={amt => handleUpdateScore('class', amt)} colorStyle={COLOR_MAP[activeClass.color]} />
             {Array.from({ length: 5 }).map((_, i) => (
@@ -623,6 +645,7 @@ function RecordsPage() {
           </div>
 
           <div className="flex-1 flex flex-col md:flex-row gap-4 md:gap-6 min-h-0">
+            {/* 왼쪽: 기록 작성 */}
             <div className="w-full md:w-1/3 flex flex-col gap-4 shrink-0 order-1 md:h-full">
               <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-white dark:border-slate-700 h-full flex flex-col">
                 <h3 className="font-bold text-lg text-slate-800 dark:text-white mb-5 flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${COLOR_MAP[activeClass.color].bg} border border-gray-300 dark:border-slate-600`}></span>{activeClass.className} 새 기록 작성</h3>
@@ -634,29 +657,98 @@ function RecordsPage() {
               </div>
             </div>
 
-            <div className="flex-1 flex flex-col bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-3xl shadow-sm border border-white dark:border-slate-700 p-5 md:p-6 overflow-hidden min-h-[400px] md:min-h-0 order-2">
-              <div className="flex flex-col xl:flex-row justify-between items-start xl:items-end mb-4 pb-4 border-b border-gray-200 dark:border-slate-700 gap-4">
-                <h3 className="font-bold text-lg text-slate-800 dark:text-white flex items-center gap-2"><IconNotebook /> 기록 내역</h3>
-                <div className="flex items-center gap-2 bg-white/80 dark:bg-slate-900/80 p-2 rounded-xl border border-gray-200 dark:border-slate-600 shadow-sm overflow-x-auto max-w-full scrollbar-hide">
-                  <input type="date" aria-label="내보내기 시작 날짜" value={exportStartDate} onChange={e => setExportStartDate(e.target.value)} className="text-xs md:text-sm font-bold bg-transparent border-none outline-none px-2 text-gray-600 dark:text-gray-300 shrink-0" />
-                  <span className="text-gray-400 dark:text-gray-500 text-xs font-bold">~</span>
-                  <input type="date" aria-label="내보내기 종료 날짜" value={exportEndDate} onChange={e => setExportEndDate(e.target.value)} className="text-xs md:text-sm font-bold bg-transparent border-none outline-none px-2 text-gray-600 dark:text-gray-300 shrink-0" />
-                  <button onClick={handleExportCSV} className="bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-colors ml-1 shrink-0">Excel 저장</button>
-                </div>
+            {/* 오른쪽: 탭 (기록 내역 / 점수 이력) */}
+            <div className="flex-1 flex flex-col bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-3xl shadow-sm border border-white dark:border-slate-700 overflow-hidden min-h-[400px] md:min-h-0 order-2">
+              {/* 탭 헤더 */}
+              <div className="flex border-b border-gray-200 dark:border-slate-700 shrink-0">
+                <button
+                  onClick={() => setActiveTab('records')}
+                  className={`flex-1 py-4 px-5 text-sm font-bold transition-colors focus:outline-none ${activeTab === 'records' ? 'text-slate-800 dark:text-white border-b-2 border-indigo-500' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                >
+                  <span className="flex items-center justify-center gap-2"><IconNotebook /> 기록 내역</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('scorelog')}
+                  className={`flex-1 py-4 px-5 text-sm font-bold transition-colors focus:outline-none ${activeTab === 'scorelog' ? 'text-slate-800 dark:text-white border-b-2 border-indigo-500' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                >
+                  <span className="flex items-center justify-center gap-2">🏅 점수 이력</span>
+                </button>
               </div>
-              <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-                {classRecords.length > 0 ? classRecords.map(rec => (
-                  <div key={rec.id} className="bg-white dark:bg-slate-900/50 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700/50 group relative">
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-sm font-black tracking-wider">{rec.date}</div>
-                      <button aria-label="기록 삭제" onClick={() => setConfirmDeleteId(rec.id)} className="text-rose-500 text-base font-bold opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity hover:underline focus:opacity-100 p-1">삭제</button>
+
+              {activeTab === 'records' ? (
+                <div className="flex-1 flex flex-col overflow-hidden p-5 md:p-6">
+                  <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-4 pb-4 border-b border-gray-200 dark:border-slate-700 gap-3 shrink-0">
+                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{classRecords.length}개의 기록</span>
+                    <div className="flex items-center gap-2 bg-white/80 dark:bg-slate-900/80 p-2 rounded-xl border border-gray-200 dark:border-slate-600 shadow-sm overflow-x-auto max-w-full scrollbar-hide">
+                      <input type="date" aria-label="내보내기 시작 날짜" value={exportStartDate} onChange={e => setExportStartDate(e.target.value)} className="text-xs md:text-sm font-bold bg-transparent border-none outline-none px-2 text-gray-600 dark:text-gray-300 shrink-0" />
+                      <span className="text-gray-400 dark:text-gray-500 text-xs font-bold">~</span>
+                      <input type="date" aria-label="내보내기 종료 날짜" value={exportEndDate} onChange={e => setExportEndDate(e.target.value)} className="text-xs md:text-sm font-bold bg-transparent border-none outline-none px-2 text-gray-600 dark:text-gray-300 shrink-0" />
+                      <button onClick={handleExportCSV} className="bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-colors ml-1 shrink-0">Excel 저장</button>
                     </div>
-                    <div className="text-slate-700 dark:text-slate-200 text-base whitespace-pre-wrap leading-relaxed font-medium">{rec.content}</div>
                   </div>
-                )) : (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500"><IconNotebook /><p className="mt-4 font-bold text-base">등록된 기록이 없습니다.</p></div>
-                )}
-              </div>
+                  <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+                    {classRecords.length > 0 ? classRecords.map(rec => (
+                      <div key={rec.id} className="bg-white dark:bg-slate-900/50 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700/50 group relative">
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-sm font-black tracking-wider">{rec.date}</div>
+                          <button aria-label="기록 삭제" onClick={() => setConfirmDeleteId(rec.id)} className="text-rose-500 text-base font-bold opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity hover:underline focus:opacity-100 p-1">삭제</button>
+                        </div>
+                        <div className="text-slate-700 dark:text-slate-200 text-base whitespace-pre-wrap leading-relaxed font-medium">{rec.content}</div>
+                      </div>
+                    )) : (
+                      <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500"><IconNotebook /><p className="mt-4 font-bold text-base">등록된 기록이 없습니다.</p></div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col overflow-hidden p-5 md:p-6">
+                  <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200 dark:border-slate-700 shrink-0 gap-3">
+                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{classScoreLogs.length}개의 점수 변경 이력</span>
+                    {classScoreLogs.length > 0 && (
+                      <button
+                        onClick={async () => {
+                          const remaining = scoreLogs.filter(l => l.classId !== selectedClassId);
+                          await updateScoreLogs(remaining);
+                          addToast('이 학급의 점수 이력을 모두 삭제했습니다.', 'success');
+                        }}
+                        className="text-xs font-bold text-rose-500 hover:text-rose-600 px-3 py-1.5 rounded-lg border border-rose-200 dark:border-rose-800/50 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
+                      >
+                        전체 삭제
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                    {classScoreLogs.length > 0 ? classScoreLogs.map(log => {
+                      const isPlus = log.amount > 0;
+                      const colorStyle = COLOR_MAP[activeClass.color];
+                      return (
+                        <div key={log.id} className="flex items-center justify-between bg-white dark:bg-slate-900/50 px-4 py-3 rounded-xl border border-slate-100 dark:border-slate-700/50 shadow-sm gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-base font-black shrink-0 ${isPlus ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' : 'bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400'}`}>
+                              {isPlus ? '+' : '−'}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`text-xs font-black px-2 py-0.5 rounded-md ${colorStyle.bg} ${colorStyle.text}`}>{log.label}</span>
+                                <span className={`text-base font-black ${isPlus ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                                  {isPlus ? `+${log.amount}점` : `${log.amount}점`}
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{log.date} {log.time}</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }) : (
+                      <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 pt-12">
+                        <span className="text-4xl mb-3">🏅</span>
+                        <p className="font-bold text-base">아직 점수 변경 이력이 없습니다.</p>
+                        <p className="text-sm mt-1">위의 점수 카드에서 점수를 변경해보세요.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1554,7 +1646,18 @@ export default function App() {
   const [tasksState, setTasksState] = useState<Task[]>(() => loadFromLocal('tasks', MOCK_TASKS));
   const [profileState, setProfileState] = useState<UserProfile>(() => loadFromLocal('profile', DEFAULT_PROFILE));
   const [menuOrderState, setMenuOrderState] = useState<string[]>(() => loadFromLocal('menuOrder', DEFAULT_MENU_ORDER));
+  const [scoreLogsState, setScoreLogsState] = useState<ScoreLog[]>(() => loadFromLocal('scoreLogs', []));
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+
+  // 창 너비 기반 레이아웃 분기 (CSS/Tailwind breakpoint 우회)
+  const [windowWidth, setWindowWidth] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 1024);
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const isSidebarLayout = windowWidth >= 600;
+  const sidebarWidth = Math.min(256, Math.max(56, Math.round(windowWidth * 0.18)));
 
   useEffect(() => {
     const initAuth = async () => {
@@ -1624,6 +1727,7 @@ export default function App() {
     tasks: tasksState, updateTasks: async (data) => { setTasksState(data); if (!isFirebaseEnabled) saveToLocal('tasks', data); else await updateFirestoreField('tasks', data); },
     profile: profileState, updateProfile: async (data) => { setProfileState(data); if (!isFirebaseEnabled) saveToLocal('profile', data); else await updateFirestoreField('profile', data); },
     menuOrder: menuOrderState, updateMenuOrder: async (data) => { setMenuOrderState(data); if (!isFirebaseEnabled) saveToLocal('menuOrder', data); else await updateFirestoreField('menuOrder', data); },
+    scoreLogs: scoreLogsState, updateScoreLogs: async (data) => { setScoreLogsState(data); saveToLocal('scoreLogs', data); },
     goToPage: (page, params) => { setActivePage(page); setPageParams(params); },
     pageParams,
   };
@@ -1665,107 +1769,127 @@ export default function App() {
     <ToastProvider>
       <AppContext.Provider value={contextValue}>
 
-        {/* ── CSS 미디어 쿼리로 레이아웃 전환 (600px 기준) ── */}
-        <style>{`
-          .layout-root { display: flex; flex-direction: column; height: 100vh; }
-          .layout-sidebar { display: none; }
-          .layout-bottom-nav { display: flex; }
-          @media (min-width: 600px) {
-            .layout-root { flex-direction: row; }
-            .layout-sidebar { display: flex; width: clamp(180px, 18vw, 256px); }
-            .layout-bottom-nav { display: none; }
-          }
-        `}</style>
-
-        <div className="layout-root bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 overflow-hidden selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
-
-          {/* ── 사이드바 (600px 이상) ── */}
-          <aside className="layout-sidebar flex-col bg-slate-900 z-20 shrink-0 border-r border-slate-800 shadow-xl">
-            <div className="p-6 pb-2">
-              <div className="flex items-center gap-3 text-white mb-2">
-                <div className="p-2 bg-indigo-500 rounded-xl shadow-lg"><IconCalendar /></div>
-                <span className="text-xl font-black tracking-tight truncate">에듀플래너</span>
-              </div>
-              <div className="text-[10px] font-bold text-slate-500 px-1 uppercase tracking-widest flex items-center gap-2">
-                Smart Scheduler
-                <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`} title={isFirebaseEnabled ? "클라우드 연동됨" : "로컬 스토리지 보관됨"}></span>
-              </div>
-            </div>
-
-            <nav className="flex-1 px-4 space-y-2 mt-6 overflow-y-auto scrollbar-hide">
-              {menuOrderState.map((itemId, index) => {
-                const item = NAV_ITEMS_CONFIG[itemId];
-                if (!item) return null;
-                return (
-                  <div
-                    key={item.id}
-                    draggable
-                    onDragStart={(e) => handleNavDragStart(e, index)}
-                    onDragOver={(e) => handleNavDragOver(e, index)}
-                    onDrop={(e) => handleNavDrop(e, index)}
-                    className={`cursor-grab active:cursor-grabbing transition-opacity ${draggedNavIdx === index ? 'opacity-30' : 'opacity-100'}`}
-                  >
-                    <button onClick={() => { setActivePage(item.id as any); setPageParams(null); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-200 focus:outline-none ${activePage === item.id ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-                      <div className="opacity-20 hover:opacity-100 transition-opacity px-1 flex flex-col gap-[3px] items-center justify-center shrink-0" aria-hidden="true" title="드래그하여 순서 변경">
-                        <span className="w-1 h-1 bg-current rounded-full"></span><span className="w-1 h-1 bg-current rounded-full"></span><span className="w-1 h-1 bg-current rounded-full"></span>
-                      </div>
-                      {item.icon}
-                      <span className="font-bold text-sm">{item.label}</span>
-                    </button>
-                  </div>
-                );
-              })}
-            </nav>
-
-            <div className="p-4">
-              <button aria-label="프로필 설정 수정" onClick={() => setIsProfileModalOpen(true)} className="w-full text-left bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 flex items-center gap-3 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 group">
-                <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-lg shrink-0 uppercase shadow-inner">
-                  {profileState.name.charAt(0) || 'U'}
+        {isSidebarLayout ? (
+          /* ── 사이드바 레이아웃 (windowWidth >= 600) ── */
+          <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }} className="bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
+            <aside style={{ width: `${sidebarWidth}px`, minWidth: `${sidebarWidth}px`, maxWidth: `${sidebarWidth}px`, display: 'flex', flexDirection: 'column' }} className="bg-slate-900 z-20 shrink-0 border-r border-slate-800 shadow-xl">
+              <div className="p-5 pb-2">
+                <div className="flex items-center gap-3 text-white mb-2 overflow-hidden">
+                  <div className="p-2 bg-indigo-500 rounded-xl shadow-lg shrink-0"><IconCalendar /></div>
+                  {sidebarWidth >= 160 && <span className="text-lg font-black tracking-tight truncate">에듀플래너</span>}
                 </div>
-                <div className="overflow-hidden flex-1">
-                  <div className="text-white text-sm font-bold truncate group-hover:text-indigo-300 transition-colors flex items-center justify-between">
-                    <span className="truncate">{profileState.name}</span>
-                    <span className="opacity-0 group-hover:opacity-100 text-xs shrink-0 ml-1">✏️</span>
+                {sidebarWidth >= 160 && (
+                  <div className="text-[10px] font-bold text-slate-500 px-1 uppercase tracking-widest flex items-center gap-2">
+                    Smart Scheduler
+                    <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`} title={isFirebaseEnabled ? "클라우드 연동됨" : "로컬 스토리지 보관됨"}></span>
                   </div>
-                  <div className="text-slate-400 text-xs font-medium truncate mt-0.5">{profileState.subject}</div>
-                </div>
+                )}
+                {sidebarWidth < 160 && (
+                  <div className="flex justify-center mt-1">
+                    <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`}></span>
+                  </div>
+                )}
+              </div>
+
+              <nav className="flex-1 px-2 space-y-1 mt-4 overflow-y-auto scrollbar-hide">
+                {menuOrderState.map((itemId, index) => {
+                  const item = NAV_ITEMS_CONFIG[itemId];
+                  if (!item) return null;
+                  const isActive = activePage === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      draggable={sidebarWidth >= 160}
+                      onDragStart={(e) => handleNavDragStart(e, index)}
+                      onDragOver={(e) => handleNavDragOver(e, index)}
+                      onDrop={(e) => handleNavDrop(e, index)}
+                      className={`cursor-grab active:cursor-grabbing transition-opacity ${draggedNavIdx === index ? 'opacity-30' : 'opacity-100'}`}
+                    >
+                      <button
+                        title={item.label}
+                        onClick={() => { setActivePage(item.id as any); setPageParams(null); }}
+                        className={`w-full flex items-center rounded-xl transition-all duration-200 focus:outline-none ${isActive ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                        style={{ gap: sidebarWidth >= 160 ? '12px' : '0', padding: sidebarWidth >= 160 ? '10px 14px' : '12px 0', justifyContent: sidebarWidth >= 160 ? 'flex-start' : 'center' }}
+                      >
+                        {sidebarWidth >= 160 && (
+                          <div className="opacity-20 hover:opacity-100 transition-opacity flex flex-col gap-[3px] items-center justify-center shrink-0" aria-hidden="true">
+                            <span className="w-1 h-1 bg-current rounded-full"></span><span className="w-1 h-1 bg-current rounded-full"></span><span className="w-1 h-1 bg-current rounded-full"></span>
+                          </div>
+                        )}
+                        <span className="shrink-0">{item.icon}</span>
+                        {sidebarWidth >= 160 && <span className="font-bold text-sm truncate">{item.label}</span>}
+                      </button>
+                    </div>
+                  );
+                })}
+              </nav>
+
+              <div className="p-2">
+                <button
+                  aria-label="프로필 설정 수정"
+                  onClick={() => setIsProfileModalOpen(true)}
+                  className="w-full bg-slate-800/50 rounded-2xl border border-slate-700/50 flex items-center hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 group overflow-hidden"
+                  style={{ gap: sidebarWidth >= 160 ? '12px' : '0', padding: sidebarWidth >= 160 ? '14px' : '10px 0', justifyContent: sidebarWidth >= 160 ? 'flex-start' : 'center' }}
+                >
+                  <div className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-base shrink-0 uppercase shadow-inner">
+                    {profileState.name.charAt(0) || 'U'}
+                  </div>
+                  {sidebarWidth >= 160 && (
+                    <div className="overflow-hidden flex-1">
+                      <div className="text-white text-sm font-bold truncate group-hover:text-indigo-300 transition-colors">{profileState.name}</div>
+                      <div className="text-slate-400 text-xs font-medium truncate mt-0.5">{profileState.subject}</div>
+                    </div>
+                  )}
+                </button>
+              </div>
+            </aside>
+
+            <main className="flex-1 overflow-hidden relative bg-white dark:bg-slate-900 min-w-0">
+              <div className="max-w-[1400px] mx-auto h-full shadow-2xl bg-white dark:bg-slate-900 border-l border-r border-slate-100/50 dark:border-slate-800/50">
+                {activePage === 'plan'     && <LessonPlanPage />}
+                {activePage === 'settings' && <SettingsPage />}
+                {activePage === 'manage'   && <ManagePage />}
+                {activePage === 'records'  && <RecordsPage />}
+                {activePage === 'tasks'    && <TasksPage />}
+              </div>
+            </main>
+          </div>
+        ) : (
+          /* ── 하단 탭바 레이아웃 (windowWidth < 600) ── */
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }} className="bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
+            <header className="bg-slate-900 px-5 py-4 flex items-center justify-between shrink-0 shadow-md z-20">
+              <div className="flex items-center gap-2.5 text-white">
+                <div className="p-1.5 bg-indigo-500 rounded-lg"><IconCalendar /></div>
+                <span className="text-lg font-black tracking-tight">에듀플래너</span>
+                <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`}></span>
+              </div>
+              <button aria-label="프로필 설정 수정" onClick={() => setIsProfileModalOpen(true)} className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-sm uppercase focus:outline-none shadow-inner">
+                {profileState.name.charAt(0) || 'U'}
               </button>
-            </div>
-          </aside>
-
-          {/* ── 메인 콘텐츠 ── */}
-          <main className="flex-1 overflow-hidden relative bg-white dark:bg-slate-900 min-w-0">
-            <div className="max-w-[1400px] mx-auto h-full shadow-2xl bg-white dark:bg-slate-900 border-l border-r border-slate-100/50 dark:border-slate-800/50">
+            </header>
+            <main className="flex-1 overflow-hidden relative bg-gray-50 dark:bg-slate-900 min-w-0">
               {activePage === 'plan'     && <LessonPlanPage />}
               {activePage === 'settings' && <SettingsPage />}
               {activePage === 'manage'   && <ManagePage />}
               {activePage === 'records'  && <RecordsPage />}
               {activePage === 'tasks'    && <TasksPage />}
-            </div>
-          </main>
-
-          {/* ── 하단 탭바 (600px 미만) ── */}
-          <nav className="layout-bottom-nav bg-white dark:bg-slate-900 border-t border-gray-200 dark:border-slate-800 shrink-0 px-2 pb-safe pt-1 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-            {menuOrderState.map((itemId) => {
-              const item = NAV_ITEMS_CONFIG[itemId];
-              if (!item) return null;
-              const isActive = activePage === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => { setActivePage(item.id as any); setPageParams(null); }}
-                  className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1.5 transition-colors focus:outline-none ${isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
-                >
-                  <div className={`transition-transform duration-200 ${isActive ? 'scale-110 -translate-y-0.5' : ''}`}>
-                    {item.icon}
-                  </div>
-                  <span className={`text-[10px] leading-none ${isActive ? 'font-black' : 'font-bold'}`}>{item.label}</span>
-                </button>
-              );
-            })}
-          </nav>
-
-        </div>
+            </main>
+            <nav className="bg-white dark:bg-slate-900 border-t border-gray-200 dark:border-slate-800 shrink-0 flex px-2 pb-safe pt-1 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+              {menuOrderState.map((itemId) => {
+                const item = NAV_ITEMS_CONFIG[itemId];
+                if (!item) return null;
+                const isActive = activePage === item.id;
+                return (
+                  <button key={item.id} onClick={() => { setActivePage(item.id as any); setPageParams(null); }}
+                    className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1.5 transition-colors focus:outline-none ${isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}>
+                    <div className={`transition-transform duration-200 ${isActive ? 'scale-110 -translate-y-0.5' : ''}`}>{item.icon}</div>
+                    <span className={`text-[10px] leading-none ${isActive ? 'font-black' : 'font-bold'}`}>{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        )}
 
         {isProfileModalOpen && (
           <ProfileModal
