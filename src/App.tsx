@@ -781,6 +781,27 @@ function ManagePage() {
   const todayStr = dateUtils.formatDate(new Date());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const todayColRef = useRef<HTMLDivElement>(null);
+  const periodRowRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // 교시별 수업 시간 정의 (시작 HH*60+MM ~ 종료 HH*60+MM)
+  const PERIOD_TIMES: { period: number; start: number; end: number }[] = [
+    { period: 1, start: 8*60+50,  end: 9*60+35  },
+    { period: 2, start: 9*60+45,  end: 10*60+30 },
+    { period: 3, start: 10*60+40, end: 11*60+25 },
+    { period: 4, start: 11*60+35, end: 12*60+20 },
+    { period: 5, start: 13*60+20, end: 14*60+5  },
+    { period: 6, start: 14*60+15, end: 15*60+0  },
+    { period: 7, start: 15*60+10, end: 15*60+55 },
+  ];
+
+  const getCurrentPeriod = (): number | null => {
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    for (const pt of PERIOD_TIMES) {
+      if (nowMinutes >= pt.start && nowMinutes <= pt.end) return pt.period;
+    }
+    return null;
+  };
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -788,6 +809,17 @@ function ManagePage() {
     if (!container || !todayCol) return;
     const colLeft = todayCol.offsetLeft;
     container.scrollTo({ left: Math.max(0, colLeft - 76), behavior: 'smooth' });
+
+    // 현재 교시에 해당하는 행으로 세로 스크롤
+    const currentPeriod = getCurrentPeriod();
+    if (currentPeriod !== null) {
+      const periodRow = periodRowRefs.current[currentPeriod - 1];
+      if (periodRow) {
+        setTimeout(() => {
+          periodRow.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }, 100);
+      }
+    }
   }, [currentWeekStart]);
 
   const schedulesToRender = useMemo(() => {
@@ -961,8 +993,8 @@ function ManagePage() {
 
           {/* Time Slots */}
           <div className="divide-y divide-gray-100 dark:divide-slate-700/50 bg-slate-50/30 dark:bg-slate-900/20">
-            {periods.map(period => (
-              <div key={period} className="grid grid-cols-[60px_repeat(5,minmax(0,1fr))] min-h-[110px]">
+            {periods.map((period, pIdx) => (
+              <div key={period} ref={el => { periodRowRefs.current[pIdx] = el; }} className="grid grid-cols-[60px_repeat(5,minmax(0,1fr))] min-h-[110px]">
                 <div className="flex items-center justify-center border-r border-gray-200 dark:border-slate-700 bg-slate-100/80 dark:bg-slate-800/80 font-black text-slate-300 dark:text-slate-600 text-xl sticky left-0 z-10 backdrop-blur-sm shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">{period}</div>
                 {daysInWeek.map((date) => {
                   const dateStr = dateUtils.formatDate(date);
