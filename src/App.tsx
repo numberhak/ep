@@ -763,6 +763,9 @@ function ManagePage() {
   const { lessons, classes, holidays, events, tasks, goToPage, updateEvents } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
   const [selectedClassId, setSelectedClassId] = useState<string>('all');
+  
+  // 날짜 선택 기준을 현재 날짜로 유지하기 위한 상태 추가
+  const [selectedDate, setSelectedDate] = useState<string>(dateUtils.formatDate(new Date()));
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(dateUtils.getStartOfWeek(dateUtils.formatDate(new Date())));
   const [selectedItem, setSelectedItem] = useState<{ item: ScheduledItem; classInfo: ClassSchedule } | null>(null);
 
@@ -915,13 +918,21 @@ function ManagePage() {
                 >
                   <div className={`text-xs font-bold flex items-center justify-center gap-1 w-full ${isToday ? 'text-indigo-500 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400'}`}>
                     {i === 0 && (
-                      <button onClick={() => setCurrentWeekStart(d => dateUtils.addDays(d, -7))} className="p-1 -ml-2 text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 focus:outline-none" title="이전 주">
+                      <button onClick={() => {
+                        const newWeekStart = dateUtils.addDays(currentWeekStart, -7);
+                        setCurrentWeekStart(newWeekStart);
+                        setSelectedDate(dateUtils.formatDate(newWeekStart));
+                      }} className="p-1 -ml-2 text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 focus:outline-none" title="이전 주">
                         <IconLeft />
                       </button>
                     )}
                     {dayNames[i]}
                     {i === 4 && (
-                      <button onClick={() => setCurrentWeekStart(d => dateUtils.addDays(d, 7))} className="p-1 -mr-2 text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 focus:outline-none" title="다음 주">
+                      <button onClick={() => {
+                        const newWeekStart = dateUtils.addDays(currentWeekStart, 7);
+                        setCurrentWeekStart(newWeekStart);
+                        setSelectedDate(dateUtils.formatDate(newWeekStart));
+                      }} className="p-1 -mr-2 text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 focus:outline-none" title="다음 주">
                         <IconRight />
                       </button>
                     )}
@@ -1037,25 +1048,30 @@ function ManagePage() {
         </div>
       </div>
 
-      {/* 하단 주간 이동 배너 */}
+      {/* 하단 주간 이동 배너: 모바일에서는 텍스트 숨김 (hidden sm:block 적용) 및 선택 상태 관리 */}
       <div className="mt-4 p-4 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
-        <div className="text-sm font-bold text-gray-700 dark:text-gray-300">
+        <div className="hidden sm:block text-sm font-bold text-gray-700 dark:text-gray-300">
           현재 주간: {dateUtils.formatDate(daysInWeek[0])} ~ {dateUtils.formatDate(daysInWeek[4])}
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <input
             type="date"
             aria-label="이동할 주간 선택"
-            value={dateUtils.formatDate(currentWeekStart)}
+            value={selectedDate}
             onChange={(e) => {
               if (e.target.value) {
+                setSelectedDate(e.target.value);
                 setCurrentWeekStart(dateUtils.getStartOfWeek(e.target.value));
               }
             }}
             className="w-full sm:w-auto border border-gray-300 dark:border-slate-600 p-2.5 rounded-xl text-sm font-bold bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
           <button
-            onClick={() => setCurrentWeekStart(dateUtils.getStartOfWeek(dateUtils.formatDate(new Date())))}
+            onClick={() => {
+              const today = dateUtils.formatDate(new Date());
+              setSelectedDate(today);
+              setCurrentWeekStart(dateUtils.getStartOfWeek(today));
+            }}
             className="px-4 py-2.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded-xl text-sm font-bold hover:bg-indigo-200 whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
             이번 주로
