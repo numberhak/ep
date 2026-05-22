@@ -236,7 +236,7 @@ function ConfirmModal({ message, onConfirm, onCancel }: ConfirmModalProps) {
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-gray-900/40 dark:bg-gray-900/70 backdrop-blur-sm px-4">
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-6 max-w-xs w-full animate-in zoom-in-95 border border-slate-100 dark:border-slate-700">
-        <p className="text-base font-bold text-gray-800 dark:text-gray-100 mb-6 leading-relaxed">{message}</p>
+        <p className="text-base font-bold text-gray-800 dark:text-gray-100 mb-6 leading-relaxed whitespace-pre-line">{message}</p>
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="px-4 py-2.5 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200 rounded-xl text-sm font-bold hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors focus:outline-none">취소</button>
           <button onClick={onConfirm} className="px-4 py-2.5 bg-rose-600 dark:bg-rose-500 text-white rounded-xl text-sm font-bold hover:bg-rose-700 dark:hover:bg-rose-600 transition-colors focus:outline-none">삭제</button>
@@ -1008,6 +1008,12 @@ function ManagePage() {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(dateUtils.getStartOfWeek(dateUtils.formatDate(new Date())));
   const [selectedItem, setSelectedItem] = useState<{ item: ScheduledItem; classInfo: ClassSchedule } | null>(null);
 
+  useEffect(() => {
+    if (selectedClassId !== 'all' && !classes.some(c => c.classId === selectedClassId)) {
+      setSelectedClassId('all');
+    }
+  }, [classes, selectedClassId]);
+
   const [isModifying, setIsModifying] = useState(false);
   const [modifyType, setModifyType] = useState<'move' | 'cancel' | 'replace'>('move');
   const [targetDate, setTargetDate] = useState('');
@@ -1349,15 +1355,15 @@ function ManagePage() {
                           
                           if (data.item.type === 'lesson') {
                             return (
-                              <button key={idx} aria-label={`${data.classInfo.className} ${data.item.lesson?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left p-2.5 rounded-lg shadow-sm transition-all text-xs group focus:outline-none ${style.ring} focus-visible:ring-offset-1 ${style.bg} ${isSelected ? `border-l-[6px] ${style.leftBorder} border-y-transparent border-r-transparent shadow-md` : `border ${style.border} ${style.hover}`}`}>
-                                <div className="flex justify-between items-center mb-1.5 gap-1">
-                                  <div className={`font-black ${style.text} opacity-90 flex items-center min-w-0 shrink`}>
-                                    <span className="truncate">{data.classInfo.className}</span>
-                                    <span className="ml-1 shrink-0 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
-                                  </div>
+                              <button key={idx} aria-label={`${data.classInfo.className} ${data.item.lesson?.order}차시 ${data.item.lesson?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left p-2.5 rounded-lg shadow-sm transition-all text-xs group focus:outline-none ${style.ring} focus-visible:ring-offset-1 ${style.bg} ${isSelected ? `border-l-[6px] ${style.leftBorder} border-y-transparent border-r-transparent shadow-md` : `border ${style.border} ${style.hover}`}`}>
+                                <div className={`font-black ${style.text} opacity-90 leading-tight truncate`}>
+                                  {data.classInfo.className}
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-1">
+                                  <span className="shrink-0 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1.5 py-0.5 rounded-md dark:text-white/80">{data.classInfo.classScore || 0}점</span>
                                   <span className="shrink-0 text-[10px] bg-white/60 dark:bg-black/20 px-1.5 py-0.5 rounded font-bold dark:text-white/80">{data.item.lesson?.order}차시</span>
                                 </div>
-                                <div className="font-bold text-gray-800 dark:text-gray-100 leading-snug truncate text-sm">{data.item.lesson?.title}</div>
+                                <div className="mt-1.5 font-bold text-gray-800 dark:text-gray-100 leading-snug line-clamp-2 break-keep text-sm">{data.item.lesson?.title}</div>
                               </button>
                             );
                           } else {
@@ -1366,14 +1372,14 @@ function ManagePage() {
                             if (isReplace) {
                               return (
                                 <button key={idx} aria-label={`${data.classInfo.className} 내용변경 일정: ${data.item.event?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left p-2.5 rounded-lg shadow-sm transition-all text-xs group focus:outline-none ${style.ring} focus-visible:ring-offset-1 ${style.bg} ${isSelected ? `border-l-[6px] ${style.leftBorder} border-y-transparent border-r-transparent shadow-md` : `border ${style.border} ${style.hover}`}`}>
-                                  <div className="flex justify-between items-center mb-1.5 gap-1">
-                                    <div className={`font-black ${style.text} opacity-90 flex items-center min-w-0 shrink`}>
-                                      <span className="truncate">{data.classInfo.className}</span>
-                                      <span className="ml-1 shrink-0 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
-                                    </div>
+                                  <div className={`font-black ${style.text} opacity-90 leading-tight truncate`}>
+                                    {data.classInfo.className}
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                                    <span className="shrink-0 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1.5 py-0.5 rounded-md dark:text-white/80">{data.classInfo.classScore || 0}점</span>
                                     <span className="shrink-0 text-[10px] bg-white/60 dark:bg-black/20 px-1.5 py-0.5 rounded font-bold dark:text-white/80">내용변경</span>
                                   </div>
-                                  <div className="font-bold text-gray-800 dark:text-gray-100 leading-snug truncate text-sm">{data.item.event?.title}</div>
+                                  <div className="mt-1.5 font-bold text-gray-800 dark:text-gray-100 leading-snug line-clamp-2 break-keep text-sm">{data.item.event?.title}</div>
                                 </button>
                               );
                             } else {
@@ -1385,14 +1391,14 @@ function ManagePage() {
                         
                               return (
                                 <button key={idx} aria-label={`${data.classInfo.className} ${typeText} 일정: ${data.item.event?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left ${eventBgClass} p-2.5 rounded-lg text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${eventBorderClass}`}>
-                                  <div className="flex justify-between items-center mb-1.5 gap-1">
-                                    <div className={`font-black ${eventTextClass} opacity-90 flex items-center min-w-0 shrink`}>
-                                      <span className="truncate">{data.classInfo.className}</span>
-                                      <span className="ml-1 shrink-0 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
-                                    </div>
+                                  <div className={`font-black ${eventTextClass} opacity-90 leading-tight truncate`}>
+                                    {data.classInfo.className}
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                                    <span className="shrink-0 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1.5 py-0.5 rounded-md dark:text-white/80">{data.classInfo.classScore || 0}점</span>
                                     <span className={`shrink-0 text-[10px] ${eventBadgeClass} px-1.5 py-0.5 rounded font-bold`}>{typeText}</span>
                                   </div>
-                                  <div className="font-bold text-gray-800 dark:text-gray-100 leading-snug truncate text-sm">{data.item.event?.title}</div>
+                                  <div className="mt-1.5 font-bold text-gray-800 dark:text-gray-100 leading-snug line-clamp-2 break-keep text-sm">{data.item.event?.title}</div>
                                 </button>
                               );
                             }
@@ -1829,7 +1835,7 @@ function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
 }
 
 function SettingsPage() {
-  const { classes, updateClasses, holidays, updateHolidays, events, updateEvents } = useContext(AppContext)!;
+  const { classes, updateClasses, holidays, updateHolidays, events, updateEvents, records, updateRecords, scoreLogs, updateScoreLogs } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
   const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -1837,6 +1843,7 @@ function SettingsPage() {
   const [isClassModalOpen, setClassModalOpen] = useState(false);
   const [isEventModalOpen, setEventModalOpen] = useState(false);
   const [isHolidayModalOpen, setHolidayModalOpen] = useState(false);
+  const [classToDelete, setClassToDelete] = useState<ClassSchedule | null>(null);
 
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [editClassName, setEditClassName] = useState('');
@@ -1845,7 +1852,11 @@ function SettingsPage() {
   const [editSlots, setEditSlots] = useState<WeeklySlot[]>([]);
 
   useEffect(() => {
-    if (classes.length > 0 && !classes.find(c => c.classId === selectedTabClassId)) { setSelectedTabClassId(classes[0].classId); }
+    if (classes.length > 0 && !classes.find(c => c.classId === selectedTabClassId)) {
+      setSelectedTabClassId(classes[0].classId);
+    } else if (classes.length === 0 && selectedTabClassId) {
+      setSelectedTabClassId('');
+    }
   }, [classes, selectedTabClassId]);
 
   const activeClass = classes.find(c => c.classId === selectedTabClassId);
@@ -1861,6 +1872,23 @@ function SettingsPage() {
   };
 
   const handleAddClass = async (newClass: ClassSchedule) => { try { await updateClasses([...classes, newClass]); setSelectedTabClassId(newClass.classId); setClassModalOpen(false); addToast('학급이 추가되었습니다.', 'success'); } catch { addToast('학급 추가에 실패했습니다.'); } };
+
+  const handleDeleteClass = async (classId: string) => {
+    const remainingClasses = classes.filter(c => c.classId !== classId);
+    try {
+      await updateClasses(remainingClasses);
+      await updateEvents(events.filter(e => e.classId !== classId));
+      await updateRecords(records.filter(r => r.classId !== classId));
+      await updateScoreLogs(scoreLogs.filter(l => l.classId !== classId));
+      if (selectedTabClassId === classId) setSelectedTabClassId(remainingClasses[0]?.classId || '');
+      if (editingClassId === classId) setEditingClassId(null);
+      setClassToDelete(null);
+      addToast('학급이 삭제되었습니다.', 'success');
+    } catch {
+      addToast('학급 삭제에 실패했습니다.');
+    }
+  };
+
   const handleAddEvent = async (newEvent: ClassEvent) => { try { await updateEvents([...events, newEvent]); setEventModalOpen(false); addToast('일정이 등록되었습니다.', 'success'); } catch { addToast('일정 등록에 실패했습니다.'); } };
   const handleDeleteEvent = async (id: string) => { try { await updateEvents(events.filter(ev => ev.id !== id)); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
   const handleAddHoliday = async (newHolidays: Holiday[]) => { try { await updateHolidays([...holidays, ...newHolidays].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())); setHolidayModalOpen(false); addToast('전체 일정이 등록되었습니다.', 'success'); } catch { addToast('일정 등록에 실패했습니다.'); } };
@@ -1908,7 +1936,13 @@ function SettingsPage() {
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6">
               <div className="bg-slate-100 dark:bg-slate-800/50 p-5 md:p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col">
-                <h2 className="text-base font-bold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2 shrink-0"><span className={`w-1.5 h-4 rounded-full ${COLOR_MAP[activeClass.color].bg} border border-gray-400`}></span>{activeClass.className} 기본 시간표</h2>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 shrink-0">
+                  <h2 className="text-base font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2"><span className={`w-1.5 h-4 rounded-full ${COLOR_MAP[activeClass.color].bg} border border-gray-400`}></span>{activeClass.className} 기본 시간표</h2>
+                  <div className="flex gap-2">
+                    <button onClick={() => startEditClass(activeClass)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">수정</button>
+                    <button onClick={() => setClassToDelete(activeClass)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors">삭제</button>
+                  </div>
+                </div>
                 <div className="space-y-2 flex-1 overflow-y-auto">
                   {activeClass.weeklySlots.map((slot, i) => (
                     <div key={i} className="flex justify-between items-center px-4 py-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm">
@@ -1990,6 +2024,14 @@ function SettingsPage() {
         </section>
       </div>
 
+      {classToDelete && (
+        <ConfirmModal
+          message={`${classToDelete.className} 학급을 삭제하시겠습니까?
+개별 일정, 학급 기록, 점수 이력도 함께 삭제됩니다.`}
+          onConfirm={() => handleDeleteClass(classToDelete.classId)}
+          onCancel={() => setClassToDelete(null)}
+        />
+      )}
       {isClassModalOpen && <ClassModal onClose={() => setClassModalOpen(false)} onAdd={handleAddClass} renderColorPicker={renderColorPicker} dayNames={dayNames} />}
       {isEventModalOpen && activeClass && <EventModal classId={activeClass.classId} className={activeClass.className} onClose={() => setEventModalOpen(false)} onAdd={handleAddEvent} />}
       {isHolidayModalOpen && <HolidayModal onClose={() => setHolidayModalOpen(false)} onAdd={handleAddHoliday} />}
@@ -2152,7 +2194,7 @@ export default function App() {
     tasks:    { id: 'tasks',    label: '업무 체크리스트', icon: <IconChecklist /> },
     plan:     { id: 'plan',     label: '수업 계획서',   icon: <IconBook /> },
     records:  { id: 'records',  label: '학급 기록장',   icon: <IconNotebook /> },
-    settings: { id: 'settings', label: '일정 설정',     icon: <IconSettings /> },
+    settings: { id: 'settings', label: '설정',          icon: <IconSettings /> },
   };
 
   const [draggedNavIdx, setDraggedNavIdx] = useState<number | null>(null);
