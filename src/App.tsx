@@ -831,6 +831,8 @@ function ManagePage() {
   const touchStartXRef = useRef<number>(0);
   const touchStartYRef = useRef<number>(0);
   const touchDirectionRef = useRef<'horizontal' | 'vertical' | null>(null);
+  const scrollLeftAtStartRef = useRef<number>(0);
+  const scrollTopAtStartRef = useRef<number>(0);
 
   // 교시별 수업 시간 정의 (시작 HH*60+MM ~ 종료 HH*60+MM)
   const PERIOD_TIMES: { period: number; start: number; end: number }[] = [
@@ -864,13 +866,10 @@ function ManagePage() {
     const scrollTop = periodRow ? Math.max(0, periodRow.offsetTop - 80) : 0;
 
     if (direction === 'next') {
-      // 다음 주: 월요일(가장 왼쪽) 표시
       container.scrollTo({ left: 0, top: scrollTop, behavior: 'smooth' });
     } else if (direction === 'prev') {
-      // 이전 주: 금요일(가장 오른쪽) 표시
       container.scrollTo({ left: container.scrollWidth, top: scrollTop, behavior: 'smooth' });
     } else {
-      // 오늘 이동: 오늘 열로 스크롤
       const todayCol = todayColRef.current;
       if (todayCol) {
         const colLeft = todayCol.offsetLeft;
@@ -882,34 +881,53 @@ function ManagePage() {
     }
   }, [currentWeekStart]);
 
-  // 터치 스크롤 방향 고정 핸들러
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartXRef.current = e.touches[0].clientX;
-    touchStartYRef.current = e.touches[0].clientY;
-    touchDirectionRef.current = null;
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
+  // non-passive 터치 이벤트 등록 (React 합성이벤트는 iOS Safari에서 preventDefault 불가)
+  useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    const dx = Math.abs(e.touches[0].clientX - touchStartXRef.current);
-    const dy = Math.abs(e.touches[0].clientY - touchStartYRef.current);
-
-    if (!touchDirectionRef.current && (dx > 5 || dy > 5)) {
-      touchDirectionRef.current = dx > dy ? 'horizontal' : 'vertical';
-    }
-
-    if (touchDirectionRef.current === 'horizontal') {
-      // 가로 스크롤 중: 세로 스크롤 막기
-      e.preventDefault();
-      const moveX = touchStartXRef.current - e.touches[0].clientX;
-      container.scrollLeft += moveX;
+    const onTouchStart = (e: TouchEvent) => {
       touchStartXRef.current = e.touches[0].clientX;
-    } else if (touchDirectionRef.current === 'vertical') {
-      // 세로 스크롤 중: 가로 스크롤 막기 (부모 컨테이너가 담당)
-    }
-  };
+      touchStartYRef.current = e.touches[0].clientY;
+      scrollLeftAtStartRef.current = container.scrollLeft;
+      scrollTopAtStartRef.current = container.scrollTop;
+      touchDirectionRef.current = null;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      const dx = e.touches[0].clientX - touchStartXRef.current;
+      const dy = e.touches[0].clientY - touchStartYRef.current;
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+
+      // 방향이 아직 미결정이면 판별 (8px threshold로 오조작 방지)
+      if (!touchDirectionRef.current && (absDx > 8 || absDy > 8)) {
+        touchDirectionRef.current = absDx > absDy ? 'horizontal' : 'vertical';
+      }
+
+      if (touchDirectionRef.current === 'horizontal') {
+        // 가로 스크롤: 브라우저 기본 세로 스크롤 & 바운스 차단
+        e.preventDefault();
+        // 시작 지점 기준 절대값 계산 (누적 오차 없음)
+        const newLeft = scrollLeftAtStartRef.current - dx;
+        // 범위 클램핑: 끝에서 튕김 원천 차단
+        container.scrollLeft = Math.max(0, Math.min(newLeft, container.scrollWidth - container.clientWidth));
+      } else if (touchDirectionRef.current === 'vertical') {
+        // 세로 스크롤: 가로 이동 차단
+        e.preventDefault();
+        const newTop = scrollTopAtStartRef.current - dy;
+        container.scrollTop = Math.max(0, Math.min(newTop, container.scrollHeight - container.clientHeight));
+      }
+    };
+
+    // passive: false 필수 — iOS Safari에서 preventDefault 작동하게 함
+    container.addEventListener('touchstart', onTouchStart, { passive: true });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => {
+      container.removeEventListener('touchstart', onTouchStart);
+      container.removeEventListener('touchmove', onTouchMove);
+    };
+  }, []);
 
   const schedulesToRender = useMemo(() => {
     const targetClasses = selectedClassId === 'all' ? classes : classes.filter(c => c.classId === selectedClassId);
@@ -1018,7 +1036,7 @@ function ManagePage() {
         </div>
       )}
 
-      <div ref={scrollContainerRef} className="flex-1 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-auto flex flex-col relative min-w-0" onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} style={{ touchAction: 'pan-y' }}>
+      <div ref={scrollContainerRef} className="flex-1 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-auto flex flex-col relative min-w-0" style={{ touchAction: 'none', overscrollBehavior: 'none' }}>
         <div className="min-w-[700px]">
           {/* Header Row */}
           <div className="grid grid-cols-[60px_repeat(5,minmax(0,1fr))] bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-sm border-b border-gray-200 dark:border-slate-700 sticky top-0 z-10 shadow-sm min-h-[80px]">
