@@ -39,6 +39,7 @@ const loadFromLocal = (key: string, fallback: any) => {
 // 1. Data Models (TypeScript Interfaces)
 // ==========================================
 export interface Lesson { id: string; order: number; title: string; memo: string; }
+export interface LessonPlan { id: string; name: string; classIds: string[]; lessons: Lesson[]; }
 export interface WeeklySlot { dayOfWeek: number; period: number; }
 export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan';
 export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; classScore?: number; groupScores?: number[]; }
@@ -174,6 +175,9 @@ const MOCK_LESSONS: Lesson[] = [
   { id: '2', order: 2, title: '1단원: 다항식의 연산', memo: '기본 공식 암기 확인' },
   { id: '3', order: 3, title: '항등식과 나머지 정리', memo: '조립제법 활용' },
 ];
+const DEFAULT_LESSON_PLANS: LessonPlan[] = [
+  { id: 'plan-default', name: '기본 수업계획서', classIds: [], lessons: MOCK_LESSONS },
+];
 const MOCK_SCHEDULES: ClassSchedule[] = [
   { classId: 'c1', className: '2학년 6반', startDate: '2026-05-04', color: 'blue',  weeklySlots: [{ dayOfWeek: 1, period: 2 }, { dayOfWeek: 3, period: 5 }], classScore: 12 },
   { classId: 'c2', className: '2학년 5반', startDate: '2026-05-04', color: 'green', weeklySlots: [{ dayOfWeek: 2, period: 1 }, { dayOfWeek: 5, period: 4 }], classScore: 8 },
@@ -191,6 +195,7 @@ const DEFAULT_MENU_ORDER = ['manage', 'tasks', 'plan', 'records', 'settings'];
 // ==========================================
 interface AppContextType {
   lessons: Lesson[];       updateLessons: (data: Lesson[]) => Promise<void>;
+  lessonPlans: LessonPlan[]; updateLessonPlans: (data: LessonPlan[]) => Promise<void>;
   classes: ClassSchedule[]; updateClasses: (data: ClassSchedule[]) => Promise<void>;
   holidays: Holiday[];     updateHolidays: (data: Holiday[]) => Promise<void>;
   events: ClassEvent[];    updateEvents: (data: ClassEvent[]) => Promise<void>;
@@ -259,38 +264,155 @@ const IconRight      = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 2
 // LessonPlanPage
 // ==========================================
 function LessonPlanPage() {
-  const { lessons, updateLessons } = useContext(AppContext)!;
+  const { lessons, updateLessons, lessonPlans, updateLessonPlans, classes } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
+  const fallbackPlans: LessonPlan[] = lessonPlans.length > 0 ? lessonPlans : [
+    { id: 'plan-default', name: '기본 수업계획서', classIds: [], lessons }
+  ];
+
+  const [selectedPlanId, setSelectedPlanId] = useState<string>(fallbackPlans[0]?.id || '');
   const [isEditMode, setIsEditMode] = useState(false);
   const [editData, setEditData] = useState<Lesson[]>([]);
+  const [editPlanName, setEditPlanName] = useState('');
+  const [editClassIds, setEditClassIds] = useState<string[]>([]);
+  const [planToDelete, setPlanToDelete] = useState<LessonPlan | null>(null);
 
-  useEffect(() => { setEditData(lessons); }, [lessons]);
+  const activePlan = fallbackPlans.find(p => p.id === selectedPlanId) || fallbackPlans[0];
 
-  const handleAdd = () => {
-    const base = isEditMode ? editData : lessons;
-    const newOrder = base.length > 0 ? Math.max(...base.map(l => l.order)) + 1 : 1;
-    const newLesson: Lesson = { id: `l-${Date.now()}`, order: newOrder, title: '', memo: '' };
-    setEditData([...base, newLesson]);
+  useEffect(() => {
+    if (fallbackPlans.length > 0 && !fallbackPlans.some(p => p.id === selectedPlanId)) {
+      setSelectedPlanId(fallbackPlans[0].id);
+    }
+  }, [fallbackPlans, selectedPlanId]);
+
+  useEffect(() => {
+    if (!activePlan) return;
+    setEditData([...(activePlan.lessons || [])].sort((a, b) => a.order - b.order));
+    setEditPlanName(activePlan.name);
+    setEditClassIds([...(activePlan.classIds || [])]);
+  }, [activePlan]);
+
+  const getAssignedClassNames = (plan: LessonPlan) => {
+    const ids = plan.classIds || [];
+    if (ids.length === 0) {
+      return plan.id === fallbackPlans[0]?.id ? '미배정 학급 기본 적용' : '적용 학급 없음';
+    }
+    return ids
+      .map(id => classes.find(c => c.classId === id)?.className)
+      .filter(Boolean)
+      .join(', ');
+  };
+
+  const persistPlans = async (nextPlans: LessonPlan[]) => {
+    await updateLessonPlans(nextPlans);
+    if (nextPlans[0]) await updateLessons(nextPlans[0].lessons);
+  };
+
+  const startEditCurrentPlan = () => {
+    if (!activePlan) return;
+    setEditData([...(activePlan.lessons || [])].sort((a, b) => a.order - b.order));
+    setEditPlanName(activePlan.name);
+    setEditClassIds([...(activePlan.classIds || [])]);
     setIsEditMode(true);
   };
 
-  const handleSaveAll = async () => {
-    try { await updateLessons(editData); setIsEditMode(false); addToast('저장되었습니다.', 'success'); } 
-    catch { addToast('저장에 실패했습니다. 다시 시도해주세요.'); }
+  const handleSelectPlan = (planId: string) => {
+    setIsEditMode(false);
+    setSelectedPlanId(planId);
   };
 
-  const handleCancelEdit = () => { setEditData(lessons); setIsEditMode(false); };
+  const handleAddPlan = async () => {
+    const newPlan: LessonPlan = {
+      id: `plan-${Date.now()}`,
+      name: `새 수업계획서 ${fallbackPlans.length + 1}`,
+      classIds: [],
+      lessons: [{ id: `l-${Date.now()}`, order: 1, title: '', memo: '' }]
+    };
+    try {
+      await persistPlans([...fallbackPlans, newPlan]);
+      setSelectedPlanId(newPlan.id);
+      setEditPlanName(newPlan.name);
+      setEditClassIds([]);
+      setEditData(newPlan.lessons);
+      setIsEditMode(true);
+      addToast('새 수업계획서를 추가했습니다.', 'success');
+    } catch {
+      addToast('수업계획서 추가에 실패했습니다.');
+    }
+  };
+
+  const handleDeletePlan = async (planId: string) => {
+    if (fallbackPlans.length <= 1) { addToast('수업계획서는 최소 1개가 필요합니다.'); return; }
+    const nextPlans = fallbackPlans.filter(p => p.id !== planId);
+    try {
+      await persistPlans(nextPlans);
+      setSelectedPlanId(nextPlans[0]?.id || '');
+      setIsEditMode(false);
+      setPlanToDelete(null);
+      addToast('수업계획서를 삭제했습니다.', 'success');
+    } catch {
+      addToast('수업계획서 삭제에 실패했습니다.');
+    }
+  };
+
+  const handleSaveAll = async () => {
+    if (!activePlan) return;
+    if (!editPlanName.trim()) { addToast('수업계획서 이름을 입력해주세요.'); return; }
+    const normalizedLessons = editData.map((l, i) => ({ ...l, order: i + 1 }));
+    const selectedClassSet = new Set(editClassIds);
+    const nextPlans = fallbackPlans.map(plan => {
+      if (plan.id === activePlan.id) {
+        return { ...plan, name: editPlanName.trim(), classIds: editClassIds, lessons: normalizedLessons };
+      }
+      return { ...plan, classIds: (plan.classIds || []).filter(id => !selectedClassSet.has(id)) };
+    });
+
+    try {
+      await persistPlans(nextPlans);
+      setIsEditMode(false);
+      addToast('저장되었습니다.', 'success');
+    } catch {
+      addToast('저장에 실패했습니다. 다시 시도해주세요.');
+    }
+  };
+
+  const handleCancelEdit = () => {
+    if (activePlan) {
+      setEditData([...(activePlan.lessons || [])].sort((a, b) => a.order - b.order));
+      setEditPlanName(activePlan.name);
+      setEditClassIds([...(activePlan.classIds || [])]);
+    }
+    setIsEditMode(false);
+  };
+
+  const saveActivePlanLessons = async (nextLessons: Lesson[]) => {
+    if (!activePlan) return;
+    const nextPlans = fallbackPlans.map(plan => plan.id === activePlan.id ? { ...plan, lessons: nextLessons } : plan);
+    await persistPlans(nextPlans);
+  };
+
+  const handleAdd = () => {
+    const base = isEditMode ? editData : (activePlan?.lessons || []);
+    const newOrder = base.length > 0 ? Math.max(...base.map(l => l.order)) + 1 : 1;
+    const newLesson: Lesson = { id: `l-${Date.now()}`, order: newOrder, title: '', memo: '' };
+    setEditData([...base, newLesson]);
+    if (activePlan) setEditPlanName(activePlan.name);
+    if (activePlan) setEditClassIds([...(activePlan.classIds || [])]);
+    setIsEditMode(true);
+  };
 
   const deleteLesson = async (id: string) => {
-    const base = isEditMode ? editData : lessons;
+    const base = isEditMode ? editData : (activePlan?.lessons || []);
     const newData = base.filter(l => l.id !== id).map((l, i) => ({ ...l, order: i + 1 }));
-    if (isEditMode) { setEditData(newData); } else {
-      try { await updateLessons(newData); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); }
+    if (isEditMode) {
+      setEditData(newData);
+    } else {
+      try { await saveActivePlanLessons(newData); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); }
     }
   };
 
   const moveLesson = async (index: number, direction: -1 | 1) => {
-    const base = isEditMode ? editData : lessons;
+    const base = isEditMode ? editData : (activePlan?.lessons || []);
     const targetIndex = index + direction;
     if (targetIndex < 0 || targetIndex >= base.length) return;
     const newData = base.map((l, i) => {
@@ -298,8 +420,10 @@ function LessonPlanPage() {
       if (i === targetIndex) return { ...base[index], order: targetIndex + 1 };
       return l;
     });
-    if (isEditMode) { setEditData(newData); } else {
-      try { await updateLessons(newData); } catch { addToast('순서 변경에 실패했습니다.'); }
+    if (isEditMode) {
+      setEditData(newData);
+    } else {
+      try { await saveActivePlanLessons(newData); } catch { addToast('순서 변경에 실패했습니다.'); }
     }
   };
 
@@ -307,29 +431,99 @@ function LessonPlanPage() {
     setEditData(editData.map(l => l.id === id ? { ...l, [field]: value } : l));
   };
 
-  const displayData = isEditMode ? editData : lessons;
+  const toggleClassAssignment = (classId: string) => {
+    setEditClassIds(prev => prev.includes(classId) ? prev.filter(id => id !== classId) : [...prev, classId]);
+  };
+
+  const displayData = (isEditMode ? editData : (activePlan?.lessons || [])).slice().sort((a, b) => a.order - b.order);
 
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500 bg-slate-50/30 dark:bg-slate-900/50 relative">
-      <header className="p-4 md:p-8 shrink-0 flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 z-10 sticky top-0 shadow-sm gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">수업 계획서</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">차시별 제목과 간략한 비고를 작성하여 전체 진도를 설계합니다.</p>
+      <header className="p-4 md:p-8 shrink-0 flex flex-col gap-4 bg-white dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 z-10 sticky top-0 shadow-sm">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">수업 계획서</h1>
+            <p className="text-gray-500 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">수업계획서를 여러 개 만들고, 학급별로 서로 다른 계획을 적용합니다.</p>
+          </div>
+          <div className="flex gap-2 w-full md:w-auto">
+            {isEditMode ? (
+              <>
+                <button onClick={handleCancelEdit} className="flex-1 md:flex-none bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200 px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-gray-200 transition-colors">취소</button>
+                <button onClick={handleSaveAll} className="flex-1 md:flex-none bg-indigo-600 dark:bg-indigo-500 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-sm transition-colors">일괄 저장</button>
+              </>
+            ) : (
+              <button onClick={startEditCurrentPlan} className="flex-1 md:flex-none bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-200 px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm">계획서 수정</button>
+            )}
+            <button onClick={handleAdd} className="flex-1 md:flex-none bg-slate-800 dark:bg-indigo-600 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-slate-700 shadow-sm transition-colors">+ 차시 추가</button>
+            <button onClick={handleAddPlan} className="flex-1 md:flex-none bg-violet-600 dark:bg-violet-500 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-violet-700 shadow-sm transition-colors">+ 계획서 추가</button>
+          </div>
         </div>
-        <div className="flex gap-2 w-full md:w-auto">
-          {isEditMode ? (
-            <>
-              <button onClick={handleCancelEdit} className="flex-1 md:flex-none bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200 px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-gray-200 transition-colors">취소</button>
-              <button onClick={handleSaveAll} className="flex-1 md:flex-none bg-indigo-600 dark:bg-indigo-500 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-sm transition-colors">일괄 저장</button>
-            </>
-          ) : (
-            <button onClick={() => { setEditData(lessons); setIsEditMode(true); }} className="flex-1 md:flex-none bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-200 px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm">일괄 수정</button>
-          )}
-          <button onClick={handleAdd} className="flex-1 md:flex-none bg-slate-800 dark:bg-indigo-600 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-slate-700 shadow-sm transition-colors">+ 추가</button>
+
+        <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
+          {fallbackPlans.map(plan => {
+            const isSelected = activePlan?.id === plan.id;
+            return (
+              <button
+                key={plan.id}
+                onClick={() => handleSelectPlan(plan.id)}
+                className={`min-w-[220px] text-left p-4 rounded-2xl border transition-all ${isSelected ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-300 dark:border-indigo-600 shadow-sm' : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800'}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className={`text-sm font-black truncate ${isSelected ? 'text-indigo-800 dark:text-indigo-200' : 'text-slate-800 dark:text-slate-200'}`}>{plan.name}</div>
+                    <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mt-1 truncate">{getAssignedClassNames(plan)}</div>
+                  </div>
+                  <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 shrink-0">{plan.lessons.length}차시</span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4 md:p-8">
+      <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-4">
+        {activePlan && (
+          <section className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 p-4 md:p-5">
+            {isEditMode ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-[minmax(240px,360px)_1fr] gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">수업계획서 이름</label>
+                    <input value={editPlanName} onChange={e => setEditPlanName(e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="예: 2학년 정규 수업" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">적용 학급</label>
+                    <div className="flex flex-wrap gap-2">
+                      {classes.length > 0 ? classes.map(cls => (
+                        <button
+                          key={cls.classId}
+                          type="button"
+                          onClick={() => toggleClassAssignment(cls.classId)}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors ${editClassIds.includes(cls.classId) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                        >
+                          {cls.className}
+                        </button>
+                      )) : <span className="text-xs font-bold text-slate-400">등록된 학급이 없습니다.</span>}
+                    </div>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">한 학급은 하나의 수업계획서에만 배정됩니다. 선택한 학급은 다른 계획서 배정에서 자동으로 제외됩니다.</p>
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={() => setPlanToDelete(activePlan)} disabled={fallbackPlans.length <= 1} className="px-3 py-2 rounded-xl text-xs font-bold bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-300 border border-rose-100 dark:border-rose-900/40 hover:bg-rose-100 disabled:opacity-40 disabled:hover:bg-rose-50">현재 계획서 삭제</button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-black text-slate-900 dark:text-white">{activePlan.name}</h2>
+                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1">적용 학급: {getAssignedClassNames(activePlan)}</p>
+                </div>
+                <div className="text-xs font-bold text-slate-400 dark:text-slate-500">미배정 학급은 첫 번째 수업계획서를 기본으로 사용합니다.</div>
+              </div>
+            )}
+          </section>
+        )}
+
         <div className="hidden md:block bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[600px]">
             <thead>
@@ -343,7 +537,7 @@ function LessonPlanPage() {
             <tbody className="divide-y divide-gray-100 dark:divide-slate-700/50">
               {displayData.map((lesson, index) => (
                 <tr key={lesson.id} className={`hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors group ${isEditMode ? 'bg-indigo-50/10 dark:bg-indigo-900/10' : ''}`}>
-                  <td className="px-6 py-5 font-black text-indigo-600 dark:text-indigo-400 whitespace-nowrap">{lesson.order}차시</td>
+                  <td className="px-6 py-5 font-black text-indigo-600 dark:text-indigo-400 whitespace-nowrap">{index + 1}차시</td>
                   {isEditMode ? (
                     <>
                       <td className="px-6 py-3"><input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" /></td>
@@ -352,66 +546,71 @@ function LessonPlanPage() {
                         <div className="flex justify-center items-center gap-1">
                           <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▲</button>
                           <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▼</button>
-                          <button aria-label="수업 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors font-bold ml-1">✕</button>
+                          <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors font-bold">×</button>
                         </div>
                       </td>
                     </>
                   ) : (
                     <>
-                      <td className="px-6 py-5 font-bold text-gray-800 dark:text-gray-200">{lesson.title || <span className="text-gray-300 dark:text-slate-600 font-normal italic">제목 없음</span>}</td>
-                      <td className="px-6 py-5 text-gray-600 dark:text-slate-400 text-sm whitespace-pre-wrap">{lesson.memo || '-'}</td>
+                      <td className="px-6 py-5 font-bold text-gray-900 dark:text-gray-100">{lesson.title || '제목 없음'}</td>
+                      <td className="px-6 py-5 text-gray-500 dark:text-gray-400 text-sm">{lesson.memo}</td>
                       <td className="px-6 py-5 text-center">
-                        <div className="flex justify-center items-center gap-1 opacity-10 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                        <div className="flex justify-center items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30">▲</button>
                           <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30">▼</button>
-                          <button aria-label="수업 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors font-bold ml-1">✕</button>
+                          <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md font-bold">×</button>
                         </div>
                       </td>
                     </>
                   )}
                 </tr>
               ))}
+              {displayData.length === 0 && (
+                <tr><td colSpan={4} className="px-6 py-12 text-center text-slate-400 font-bold">등록된 차시가 없습니다.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
 
-        <div className="md:hidden space-y-4">
+        <div className="md:hidden space-y-3">
           {displayData.map((lesson, index) => (
-            <div key={lesson.id} className={`bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border ${isEditMode ? 'border-indigo-300 dark:border-indigo-700' : 'border-gray-200 dark:border-slate-700'} flex flex-col gap-4`}>
-              <div className="flex justify-between items-center border-b border-gray-100 dark:border-slate-700/50 pb-3">
-                <span className="font-black text-xl text-indigo-600 dark:text-indigo-400">{lesson.order}차시</span>
-                <div className="flex items-center gap-2">
-                  <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-10 h-10 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-xl disabled:opacity-30 bg-gray-50 dark:bg-slate-900 text-lg">▲</button>
-                  <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-10 h-10 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-xl disabled:opacity-30 bg-gray-50 dark:bg-slate-900 text-lg">▼</button>
-                  <button aria-label="수업 삭제" onClick={() => deleteLesson(lesson.id)} className="w-10 h-10 flex items-center justify-center text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-xl font-bold ml-1 bg-gray-50 dark:bg-slate-900 text-lg">✕</button>
+            <div key={lesson.id} className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm">
+              <div className="flex justify-between items-start gap-3 mb-3">
+                <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-lg">{index + 1}차시</span>
+                <div className="flex gap-1">
+                  <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 disabled:opacity-30">▲</button>
+                  <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 disabled:opacity-30">▼</button>
+                  <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 font-bold">×</button>
                 </div>
               </div>
               {isEditMode ? (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">수업 제목</label>
-                    <input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3.5 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">교사용 메모</label>
-                    <textarea value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3.5 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm min-h-[100px]" placeholder="메모 입력" />
-                  </div>
+                <div className="space-y-2">
+                  <input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="수업 제목 입력" />
+                  <input type="text" value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="교사용 메모 입력" />
                 </div>
               ) : (
-                <div className="space-y-3">
-                  <div className="font-bold text-xl text-gray-800 dark:text-gray-100">{lesson.title || <span className="text-gray-300 dark:text-slate-600 font-normal italic">제목 없음</span>}</div>
-                  <div className="text-gray-600 dark:text-slate-400 text-base whitespace-pre-wrap bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl leading-relaxed">{lesson.memo || '메모 없음'}</div>
+                <div>
+                  <h3 className="font-bold text-gray-900 dark:text-gray-100 mb-1">{lesson.title || '제목 없음'}</h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{lesson.memo}</p>
                 </div>
               )}
             </div>
           ))}
           {displayData.length === 0 && (
-            <div className="p-10 text-center text-gray-400 dark:text-slate-500 font-bold bg-white dark:bg-slate-800 rounded-2xl border border-gray-100 dark:border-slate-700">
-              등록된 수업 계획이 없습니다.
+            <div className="bg-white dark:bg-slate-800 p-10 rounded-2xl border border-gray-100 dark:border-slate-700 text-center text-slate-400 font-bold">
+              등록된 차시가 없습니다.
             </div>
           )}
         </div>
       </div>
+
+      {planToDelete && (
+        <ConfirmModal
+          message={`${planToDelete.name} 수업계획서를 삭제하시겠습니까?\n이 계획서에 배정된 학급은 첫 번째 수업계획서를 기본으로 사용합니다.`}
+          onConfirm={() => handleDeletePlan(planToDelete.id)}
+          onCancel={() => setPlanToDelete(null)}
+        />
+      )}
     </div>
   );
 }
@@ -999,7 +1198,7 @@ function RecordsPage() {
 // ManagePage
 // ==========================================
 function ManagePage() {
-  const { lessons, classes, holidays, events, tasks, goToPage, updateEvents } = useContext(AppContext)!;
+  const { lessons, lessonPlans, classes, holidays, events, tasks, goToPage, updateEvents } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
   const [selectedClassId, setSelectedClassId] = useState<string>('all');
   
@@ -1157,12 +1356,17 @@ function ManagePage() {
   const schedulesToRender = useMemo(() => {
     const targetClasses = selectedClassId === 'all' ? classes : classes.filter(c => c.classId === selectedClassId);
     const allItems: { item: ScheduledItem; classInfo: ClassSchedule }[] = [];
+    const plans = lessonPlans.length > 0 ? lessonPlans : [{ id: 'plan-default', name: '기본 수업계획서', classIds: [], lessons }];
+    const fallbackPlan = plans[0];
+
     targetClasses.forEach(cls => {
-      const clsSchedule = generateClassLessonSchedule(lessons, cls, holidays, events, weekEndDateStr);
+      const assignedPlan = plans.find(plan => (plan.classIds || []).includes(cls.classId)) || fallbackPlan;
+      const clsLessons = assignedPlan?.lessons || lessons;
+      const clsSchedule = generateClassLessonSchedule(clsLessons, cls, holidays, events, weekEndDateStr);
       clsSchedule.forEach(item => allItems.push({ item, classInfo: cls }));
     });
     return allItems;
-  }, [lessons, classes, holidays, events, weekEndDateStr, selectedClassId]);
+  }, [lessons, lessonPlans, classes, holidays, events, weekEndDateStr, selectedClassId]);
 
   const scheduleMap = new Map<string, { item: ScheduledItem; classInfo: ClassSchedule }[]>();
   schedulesToRender.forEach(data => {
@@ -1713,6 +1917,54 @@ function ClassModal({ onClose, onAdd, renderColorPicker, dayNames }: ClassModalP
   );
 }
 
+interface ClassManageModalProps {
+  classes: ClassSchedule[];
+  onClose: () => void;
+  onEdit: (cls: ClassSchedule) => void;
+  onDelete: (cls: ClassSchedule) => void;
+}
+function ClassManageModal({ classes, onClose, onEdit, onDelete }: ClassManageModalProps) {
+  const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 dark:bg-gray-900/70 backdrop-blur-sm">
+      <div className="bg-white dark:bg-slate-800 w-full max-w-2xl max-h-[86vh] overflow-hidden rounded-3xl shadow-xl animate-in zoom-in-95 border border-slate-100 dark:border-slate-700 flex flex-col">
+        <div className="p-6 md:p-7 border-b border-slate-100 dark:border-slate-700 flex justify-between items-start gap-4">
+          <div>
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white">운영 학급 수정</h3>
+            <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400 mt-1">학급 삭제는 이 화면에서만 진행되며, 삭제 전 확인 창이 한 번 더 표시됩니다.</p>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 font-black hover:bg-slate-200 dark:hover:bg-slate-600">×</button>
+        </div>
+        <div className="p-4 md:p-6 overflow-y-auto space-y-3">
+          {classes.length > 0 ? classes.map(cls => (
+            <div key={cls.classId} className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`w-3 h-3 rounded-full ${COLOR_MAP[cls.color].bg} border border-gray-300/60 shrink-0`}></span>
+                  <span className="font-black text-slate-900 dark:text-white truncate">{cls.className}</span>
+                </div>
+                <div className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2 flex flex-wrap gap-1.5">
+                  <span className="px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">시작일 {cls.startDate}</span>
+                  {cls.weeklySlots.map((slot, idx) => (
+                    <span key={idx} className="px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">{dayNames[slot.dayOfWeek]} {slot.period}교시</span>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={() => onEdit(cls)} className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-800/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/50">시간표·색상 수정</button>
+                <button onClick={() => onDelete(cls)} className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-300 border border-rose-100 dark:border-rose-900/40 hover:bg-rose-100 dark:hover:bg-rose-900/40">삭제</button>
+              </div>
+            </div>
+          )) : (
+            <div className="p-10 text-center rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 font-bold">등록된 운영 학급이 없습니다.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface EventModalProps { classId: string; className: string; onClose: () => void; onAdd: (event: ClassEvent) => void; }
 function EventModal({ classId, className, onClose, onAdd }: EventModalProps) {
   const [newEventDate, setNewEventDate] = useState('');
@@ -1835,12 +2087,13 @@ function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
 }
 
 function SettingsPage() {
-  const { classes, updateClasses, holidays, updateHolidays, events, updateEvents, records, updateRecords, scoreLogs, updateScoreLogs } = useContext(AppContext)!;
+  const { classes, updateClasses, holidays, updateHolidays, events, updateEvents, records, updateRecords, scoreLogs, updateScoreLogs, lessonPlans, updateLessonPlans } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
   const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
 
   const [selectedTabClassId, setSelectedTabClassId] = useState<string>(classes[0]?.classId || '');
   const [isClassModalOpen, setClassModalOpen] = useState(false);
+  const [isClassManageOpen, setClassManageOpen] = useState(false);
   const [isEventModalOpen, setEventModalOpen] = useState(false);
   const [isHolidayModalOpen, setHolidayModalOpen] = useState(false);
   const [classToDelete, setClassToDelete] = useState<ClassSchedule | null>(null);
@@ -1877,6 +2130,7 @@ function SettingsPage() {
     const remainingClasses = classes.filter(c => c.classId !== classId);
     try {
       await updateClasses(remainingClasses);
+      await updateLessonPlans(lessonPlans.map(plan => ({ ...plan, classIds: (plan.classIds || []).filter(id => id !== classId) })));
       await updateEvents(events.filter(e => e.classId !== classId));
       await updateRecords(records.filter(r => r.classId !== classId));
       await updateScoreLogs(scoreLogs.filter(l => l.classId !== classId));
@@ -1904,9 +2158,18 @@ function SettingsPage() {
 
   return (
     <div className="p-4 md:p-6 h-full flex flex-col animate-in fade-in duration-500 overflow-hidden bg-white dark:bg-slate-900">
-      <header className="flex justify-between items-center mb-4 shrink-0 bg-slate-100/50 dark:bg-slate-800/50 p-4 md:p-6 rounded-2xl md:rounded-3xl">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 shrink-0 bg-slate-100/50 dark:bg-slate-800/50 p-4 md:p-6 rounded-2xl md:rounded-3xl gap-4">
         <div><h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">학급 및 일정 설정</h1><p className="text-xs md:text-sm text-gray-500 dark:text-gray-400 mt-1 md:mt-2">운영 학급과 예외 일정을 관리합니다.</p></div>
-        <button onClick={() => setClassModalOpen(true)} className="bg-slate-800 dark:bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-slate-700 shadow-sm transition-colors">+ 추가</button>
+        <div className="grid grid-cols-2 gap-2 w-full md:w-auto">
+          <button onClick={() => setClassModalOpen(true)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-4 py-3 rounded-2xl text-sm font-black hover:bg-slate-50 dark:hover:bg-slate-800 shadow-sm transition-colors flex flex-col items-start gap-1 min-w-[120px]">
+            <span className="text-lg leading-none">＋</span>
+            <span>학급 추가</span>
+          </button>
+          <button onClick={() => setClassManageOpen(true)} className="bg-slate-800 dark:bg-indigo-600 border border-slate-800 dark:border-indigo-500 text-white px-4 py-3 rounded-2xl text-sm font-black hover:bg-slate-700 shadow-sm transition-colors flex flex-col items-start gap-1 min-w-[120px]">
+            <span className="text-lg leading-none">✎</span>
+            <span>운영 학급 수정</span>
+          </button>
+        </div>
       </header>
 
       <div className="flex gap-2 overflow-x-auto pb-3 mb-2 shrink-0 scrollbar-hide">
@@ -1938,10 +2201,7 @@ function SettingsPage() {
               <div className="bg-slate-100 dark:bg-slate-800/50 p-5 md:p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 shrink-0">
                   <h2 className="text-base font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2"><span className={`w-1.5 h-4 rounded-full ${COLOR_MAP[activeClass.color].bg} border border-gray-400`}></span>{activeClass.className} 기본 시간표</h2>
-                  <div className="flex gap-2">
-                    <button onClick={() => startEditClass(activeClass)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">수정</button>
-                    <button onClick={() => setClassToDelete(activeClass)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors">삭제</button>
-                  </div>
+                  <button onClick={() => startEditClass(activeClass)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">수정</button>
                 </div>
                 <div className="space-y-2 flex-1 overflow-y-auto">
                   {activeClass.weeklySlots.map((slot, i) => (
@@ -2033,6 +2293,7 @@ function SettingsPage() {
         />
       )}
       {isClassModalOpen && <ClassModal onClose={() => setClassModalOpen(false)} onAdd={handleAddClass} renderColorPicker={renderColorPicker} dayNames={dayNames} />}
+      {isClassManageOpen && <ClassManageModal classes={classes} onClose={() => setClassManageOpen(false)} onEdit={(cls) => { setClassManageOpen(false); setSelectedTabClassId(cls.classId); startEditClass(cls); }} onDelete={(cls) => setClassToDelete(cls)} />}
       {isEventModalOpen && activeClass && <EventModal classId={activeClass.classId} className={activeClass.className} onClose={() => setEventModalOpen(false)} onAdd={handleAddEvent} />}
       {isHolidayModalOpen && <HolidayModal onClose={() => setHolidayModalOpen(false)} onAdd={handleAddHoliday} />}
     </div>
@@ -2077,6 +2338,7 @@ export default function App() {
   const [pageParams, setPageParams] = useState<any>(null);
 
   const [lessonsState, setLessonsState] = useState<Lesson[]>(() => loadFromLocal('lessons', MOCK_LESSONS));
+  const [lessonPlansState, setLessonPlansState] = useState<LessonPlan[]>(() => loadFromLocal('lessonPlans', [{ ...DEFAULT_LESSON_PLANS[0], lessons: loadFromLocal('lessons', MOCK_LESSONS) }]));
   const [classesState, setClassesState] = useState<ClassSchedule[]>(() => loadFromLocal('classes', MOCK_SCHEDULES));
   const [holidaysState, setHolidaysState] = useState<Holiday[]>(() => loadFromLocal('holidays', MOCK_HOLIDAYS));
   const [eventsState, setEventsState] = useState<ClassEvent[]>(() => loadFromLocal('events', []));
@@ -2136,6 +2398,7 @@ export default function App() {
       if (snap.exists()) {
         const data = snap.data();
         const ls = data.lessons || [];
+        const lps = data.lessonPlans || [{ ...DEFAULT_LESSON_PLANS[0], lessons: ls.length > 0 ? ls : MOCK_LESSONS }];
         const cs = data.classes || [];
         const hs = data.holidays || [];
         const es = data.events || [];
@@ -2144,6 +2407,7 @@ export default function App() {
         const ps = data.profile || DEFAULT_PROFILE;
         const ms = data.menuOrder || DEFAULT_MENU_ORDER;
         setLessonsState(ls);
+        setLessonPlansState(lps);
         setClassesState(cs);
         setHolidaysState(hs);
         setEventsState(es);
@@ -2153,6 +2417,7 @@ export default function App() {
         setMenuOrderState(ms);
         // 다음 접속 시 즉시 표시를 위해 로컬에도 캐시
         saveToLocal('lessons', ls);
+        saveToLocal('lessonPlans', lps);
         saveToLocal('classes', cs);
         saveToLocal('holidays', hs);
         saveToLocal('events', es);
@@ -2161,7 +2426,7 @@ export default function App() {
         saveToLocal('profile', ps);
         saveToLocal('menuOrder', ms);
       } else {
-        setDoc(docRef, { lessons: MOCK_LESSONS, classes: MOCK_SCHEDULES, holidays: MOCK_HOLIDAYS, events: [], records: [], tasks: MOCK_TASKS, profile: DEFAULT_PROFILE, menuOrder: DEFAULT_MENU_ORDER }, { merge: true });
+        setDoc(docRef, { lessons: MOCK_LESSONS, lessonPlans: DEFAULT_LESSON_PLANS, classes: MOCK_SCHEDULES, holidays: MOCK_HOLIDAYS, events: [], records: [], tasks: MOCK_TASKS, profile: DEFAULT_PROFILE, menuOrder: DEFAULT_MENU_ORDER }, { merge: true });
       }
       setIsLoaded(true);
     }, () => { setIsLoaded(true); });
@@ -2177,6 +2442,7 @@ export default function App() {
 
   const contextValue: AppContextType = {
     lessons: lessonsState, updateLessons: async (data) => { setLessonsState(data); if (!isFirebaseEnabled) saveToLocal('lessons', data); else await updateFirestoreField('lessons', data); },
+    lessonPlans: lessonPlansState, updateLessonPlans: async (data) => { setLessonPlansState(data); if (!isFirebaseEnabled) saveToLocal('lessonPlans', data); else await updateFirestoreField('lessonPlans', data); },
     classes: classesState, updateClasses: async (data) => { setClassesState(data); if (!isFirebaseEnabled) saveToLocal('classes', data); else await updateFirestoreField('classes', data); },
     holidays: holidaysState, updateHolidays: async (data) => { setHolidaysState(data); if (!isFirebaseEnabled) saveToLocal('holidays', data); else await updateFirestoreField('holidays', data); },
     events: eventsState, updateEvents: async (data) => { setEventsState(data); if (!isFirebaseEnabled) saveToLocal('events', data); else await updateFirestoreField('events', data); },
