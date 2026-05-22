@@ -824,6 +824,13 @@ function ManagePage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const todayColRef = useRef<HTMLDivElement>(null);
   const periodRowRefs = useRef<(HTMLDivElement | null)[]>([]);
+  // 주 이동 방향: 'next' = 다음 주(월요일로), 'prev' = 이전 주(금요일로), 'today' = 오늘 열로
+  const weekNavDirectionRef = useRef<'next' | 'prev' | 'today'>('today');
+
+  // 터치 스크롤 방향 고정을 위한 refs
+  const touchStartXRef = useRef<number>(0);
+  const touchStartYRef = useRef<number>(0);
+  const touchDirectionRef = useRef<'horizontal' | 'vertical' | null>(null);
 
   // 교시별 수업 시간 정의 (시작 HH*60+MM ~ 종료 HH*60+MM)
   const PERIOD_TIMES: { period: number; start: number; end: number }[] = [
@@ -847,20 +854,62 @@ function ManagePage() {
 
   useEffect(() => {
     const container = scrollContainerRef.current;
-    const todayCol = todayColRef.current;
-    if (!container || !todayCol) return;
+    if (!container) return;
 
-    // 가로 스크롤: 오늘 열로 이동
-    const colLeft = todayCol.offsetLeft;
-    const scrollLeft = Math.max(0, colLeft - 76);
+    const direction = weekNavDirectionRef.current;
 
     // 세로 스크롤: 현재 교시 행으로 이동 (수업 시간 외에는 최상단)
     const currentPeriod = getCurrentPeriod();
     const periodRow = currentPeriod !== null ? periodRowRefs.current[currentPeriod - 1] : null;
     const scrollTop = periodRow ? Math.max(0, periodRow.offsetTop - 80) : 0;
 
-    container.scrollTo({ left: scrollLeft, top: scrollTop, behavior: 'smooth' });
+    if (direction === 'next') {
+      // 다음 주: 월요일(가장 왼쪽) 표시
+      container.scrollTo({ left: 0, top: scrollTop, behavior: 'smooth' });
+    } else if (direction === 'prev') {
+      // 이전 주: 금요일(가장 오른쪽) 표시
+      container.scrollTo({ left: container.scrollWidth, top: scrollTop, behavior: 'smooth' });
+    } else {
+      // 오늘 이동: 오늘 열로 스크롤
+      const todayCol = todayColRef.current;
+      if (todayCol) {
+        const colLeft = todayCol.offsetLeft;
+        const scrollLeft = Math.max(0, colLeft - 76);
+        container.scrollTo({ left: scrollLeft, top: scrollTop, behavior: 'smooth' });
+      } else {
+        container.scrollTo({ left: 0, top: scrollTop, behavior: 'smooth' });
+      }
+    }
   }, [currentWeekStart]);
+
+  // 터치 스크롤 방향 고정 핸들러
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
+    touchDirectionRef.current = null;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const dx = Math.abs(e.touches[0].clientX - touchStartXRef.current);
+    const dy = Math.abs(e.touches[0].clientY - touchStartYRef.current);
+
+    if (!touchDirectionRef.current && (dx > 5 || dy > 5)) {
+      touchDirectionRef.current = dx > dy ? 'horizontal' : 'vertical';
+    }
+
+    if (touchDirectionRef.current === 'horizontal') {
+      // 가로 스크롤 중: 세로 스크롤 막기
+      e.preventDefault();
+      const moveX = touchStartXRef.current - e.touches[0].clientX;
+      container.scrollLeft += moveX;
+      touchStartXRef.current = e.touches[0].clientX;
+    } else if (touchDirectionRef.current === 'vertical') {
+      // 세로 스크롤 중: 가로 스크롤 막기 (부모 컨테이너가 담당)
+    }
+  };
 
   const schedulesToRender = useMemo(() => {
     const targetClasses = selectedClassId === 'all' ? classes : classes.filter(c => c.classId === selectedClassId);
@@ -969,7 +1018,7 @@ function ManagePage() {
         </div>
       )}
 
-      <div ref={scrollContainerRef} className="flex-1 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-auto flex flex-col relative min-w-0">
+      <div ref={scrollContainerRef} className="flex-1 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-auto flex flex-col relative min-w-0" onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} style={{ touchAction: 'pan-y' }}>
         <div className="min-w-[700px]">
           {/* Header Row */}
           <div className="grid grid-cols-[60px_repeat(5,minmax(0,1fr))] bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-sm border-b border-gray-200 dark:border-slate-700 sticky top-0 z-10 shadow-sm min-h-[80px]">
@@ -991,6 +1040,7 @@ function ManagePage() {
                   <div className={`text-xs font-bold flex items-center justify-center gap-1 w-full ${isToday ? 'text-indigo-500 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400'}`}>
                     {i === 0 && (
                       <button onClick={() => {
+                        weekNavDirectionRef.current = 'prev';
                         const newWeekStart = dateUtils.addDays(currentWeekStart, -7);
                         setCurrentWeekStart(newWeekStart);
                         setSelectedDate(dateUtils.formatDate(newWeekStart));
@@ -1001,6 +1051,7 @@ function ManagePage() {
                     {dayNames[i]}
                     {i === 4 && (
                       <button onClick={() => {
+                        weekNavDirectionRef.current = 'next';
                         const newWeekStart = dateUtils.addDays(currentWeekStart, 7);
                         setCurrentWeekStart(newWeekStart);
                         setSelectedDate(dateUtils.formatDate(newWeekStart));
@@ -1132,6 +1183,7 @@ function ManagePage() {
             value={selectedDate}
             onChange={(e) => {
               if (e.target.value) {
+                weekNavDirectionRef.current = 'today';
                 setSelectedDate(e.target.value);
                 setCurrentWeekStart(dateUtils.getStartOfWeek(e.target.value));
               }
@@ -1140,6 +1192,7 @@ function ManagePage() {
           />
           <button
             onClick={() => {
+              weekNavDirectionRef.current = 'today';
               const today = dateUtils.formatDate(new Date());
               setSelectedDate(today);
               setCurrentWeekStart(dateUtils.getStartOfWeek(today));
@@ -1737,7 +1790,9 @@ function ProfileModal({ currentProfile, onClose, onSave }: ProfileModalProps) {
 // ==========================================
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoaded, setIsLoaded] = useState(false);
+  // 로컬 데이터가 있으면 즉시 표시, Firebase는 백그라운드 동기화
+  const hasLocalData = !!localStorage.getItem('eduplanner_classes');
+  const [isLoaded, setIsLoaded] = useState(!isFirebaseEnabled || hasLocalData);
 
   const [activePage, setActivePage] = useState<'manage' | 'plan' | 'settings' | 'records' | 'tasks'>('manage');
   const [pageParams, setPageParams] = useState<any>(null);
@@ -1756,9 +1811,13 @@ export default function App() {
   // 창 너비 기반 레이아웃 분기 (기준점 800으로 수정 - 패드 화면분할 지원 강화)
   const [windowWidth, setWindowWidth] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 1024);
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
+    let timer: ReturnType<typeof setTimeout>;
+    const onResize = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => setWindowWidth(window.innerWidth), 100);
+    };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => { clearTimeout(timer); window.removeEventListener('resize', onResize); };
   }, []);
   const isSidebarLayout = windowWidth >= 800; 
   const sidebarWidth = Math.min(256, Math.max(56, Math.round(windowWidth * 0.18)));
@@ -1797,14 +1856,31 @@ export default function App() {
     const unsubscribe = onSnapshot(docRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        setLessonsState(data.lessons || []);
-        setClassesState(data.classes || []);
-        setHolidaysState(data.holidays || []);
-        setEventsState(data.events || []);
-        setRecordsState(data.records || []);
-        setTasksState(data.tasks || []);
-        setProfileState(data.profile || DEFAULT_PROFILE);
-        setMenuOrderState(data.menuOrder || DEFAULT_MENU_ORDER);
+        const ls = data.lessons || [];
+        const cs = data.classes || [];
+        const hs = data.holidays || [];
+        const es = data.events || [];
+        const rs = data.records || [];
+        const ts = data.tasks || [];
+        const ps = data.profile || DEFAULT_PROFILE;
+        const ms = data.menuOrder || DEFAULT_MENU_ORDER;
+        setLessonsState(ls);
+        setClassesState(cs);
+        setHolidaysState(hs);
+        setEventsState(es);
+        setRecordsState(rs);
+        setTasksState(ts);
+        setProfileState(ps);
+        setMenuOrderState(ms);
+        // 다음 접속 시 즉시 표시를 위해 로컬에도 캐시
+        saveToLocal('lessons', ls);
+        saveToLocal('classes', cs);
+        saveToLocal('holidays', hs);
+        saveToLocal('events', es);
+        saveToLocal('records', rs);
+        saveToLocal('tasks', ts);
+        saveToLocal('profile', ps);
+        saveToLocal('menuOrder', ms);
       } else {
         setDoc(docRef, { lessons: MOCK_LESSONS, classes: MOCK_SCHEDULES, holidays: MOCK_HOLIDAYS, events: [], records: [], tasks: MOCK_TASKS, profile: DEFAULT_PROFILE, menuOrder: DEFAULT_MENU_ORDER }, { merge: true });
       }
