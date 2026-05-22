@@ -807,19 +807,17 @@ function ManagePage() {
     const container = scrollContainerRef.current;
     const todayCol = todayColRef.current;
     if (!container || !todayCol) return;
-    const colLeft = todayCol.offsetLeft;
-    container.scrollTo({ left: Math.max(0, colLeft - 76), behavior: 'smooth' });
 
-    // 현재 교시에 해당하는 행으로 세로 스크롤
+    // 가로 스크롤: 오늘 열로 이동
+    const colLeft = todayCol.offsetLeft;
+    const scrollLeft = Math.max(0, colLeft - 76);
+
+    // 세로 스크롤: 현재 교시 행으로 이동 (수업 시간 외에는 최상단)
     const currentPeriod = getCurrentPeriod();
-    if (currentPeriod !== null) {
-      const periodRow = periodRowRefs.current[currentPeriod - 1];
-      if (periodRow) {
-        setTimeout(() => {
-          periodRow.scrollIntoView({ block: 'start', behavior: 'smooth' });
-        }, 100);
-      }
-    }
+    const periodRow = currentPeriod !== null ? periodRowRefs.current[currentPeriod - 1] : null;
+    const scrollTop = periodRow ? Math.max(0, periodRow.offsetTop - 80) : 0;
+
+    container.scrollTo({ left: scrollLeft, top: scrollTop, behavior: 'smooth' });
   }, [currentWeekStart]);
 
   const schedulesToRender = useMemo(() => {
