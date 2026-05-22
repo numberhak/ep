@@ -44,7 +44,7 @@ export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan'
 export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; classScore?: number; groupScores?: number[]; }
 export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; }
 export interface ClassEvent { id: string; classId: string; date: string; period: number; title: string; type: 'exception' | 'extra' | 'replace'; }
-export interface ClassRecord { id: string; classId: string; date: string; content: string; }
+export interface ClassRecord { id: string; classId: string; date: string; content: string; important?: boolean; }
 export interface UserProfile { name: string; subject: string; }
 export interface Task { id: string; title: string; date?: string; completed: boolean; }
 
@@ -544,6 +544,7 @@ function RecordsPage() {
   const [selectedClassId, setSelectedClassId] = useState<string>(pageParams?.classId || (classes[0]?.classId || ''));
   const [newDate, setNewDate] = useState(dateUtils.formatDate(new Date()));
   const [newContent, setNewContent] = useState('');
+  const [newImportant, setNewImportant] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'records' | 'scorelog'>('records');
 
@@ -554,12 +555,13 @@ function RecordsPage() {
 
   const activeClass = classes.find(c => c.classId === selectedClassId);
   const classRecords = records.filter(r => r.classId === selectedClassId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const importantRecords = classRecords.filter(r => r.important);
   const classScoreLogs = scoreLogs.filter(l => l.classId === selectedClassId).sort((a, b) => `${b.date}${b.time}` < `${a.date}${a.time}` ? -1 : 1);
 
   const handleSave = async () => {
     if (!newContent.trim() || !selectedClassId) return;
-    const newRecord: ClassRecord = { id: `rec-${Date.now()}`, classId: selectedClassId, date: newDate, content: newContent };
-    try { await updateRecords([...records, newRecord]); setNewContent(''); addToast('기록이 저장되었습니다.', 'success'); } catch { addToast('저장에 실패했습니다.'); }
+    const newRecord: ClassRecord = { id: `rec-${Date.now()}`, classId: selectedClassId, date: newDate, content: newContent, important: newImportant };
+    try { await updateRecords([...records, newRecord]); setNewContent(''); setNewImportant(false); addToast('기록이 저장되었습니다.', 'success'); } catch { addToast('저장에 실패했습니다.'); }
   };
 
   const handleDelete = async (id: string) => {
@@ -641,6 +643,24 @@ function RecordsPage() {
             ))}
           </div>
 
+          {/* 중요 기록 핀 영역 */}
+          {importantRecords.length > 0 && (
+            <div className="shrink-0 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 rounded-2xl p-4 flex flex-col gap-2">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-base">⭐</span>
+                <span className="text-xs font-black text-amber-700 dark:text-amber-400 uppercase tracking-widest">중요 기록</span>
+              </div>
+              <div className="flex flex-col gap-2">
+                {importantRecords.map(rec => (
+                  <div key={rec.id} className="flex items-start gap-3 bg-white dark:bg-slate-800/60 rounded-xl px-4 py-3 border border-amber-100 dark:border-amber-800/40 shadow-sm">
+                    <span className="text-xs font-black text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/40 px-2 py-1 rounded-lg shrink-0 mt-0.5">{rec.date}</span>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200 whitespace-pre-wrap leading-relaxed flex-1">{rec.content}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex-1 flex flex-col md:flex-row gap-4 md:gap-6 min-h-0">
             {/* 왼쪽: 기록 작성 */}
             <div className="w-full md:w-1/3 flex flex-col gap-4 shrink-0 order-1 md:h-full">
@@ -649,6 +669,13 @@ function RecordsPage() {
                 <div className="space-y-5 flex-1 flex flex-col">
                   <div><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">날짜</label><input type="date" aria-label="기록 날짜" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3.5 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" /></div>
                   <div className="flex-1 flex flex-col"><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">내용</label><textarea aria-label="기록 내용" value={newContent} onChange={e => setNewContent(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-4 rounded-xl text-base flex-1 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white min-h-[140px] md:min-h-0" placeholder="이 학급의 오늘 수업 분위기, 특이사항 등을 남겨주세요." /></div>
+                  <label className={`flex items-center gap-3 cursor-pointer select-none px-4 py-3 rounded-xl border transition-colors ${newImportant ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-600' : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700 hover:border-amber-300 dark:hover:border-amber-600'}`}>
+                    <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${newImportant ? 'bg-amber-400 border-amber-400' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'}`}>
+                      {newImportant && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>}
+                    </div>
+                    <input type="checkbox" className="sr-only" checked={newImportant} onChange={e => setNewImportant(e.target.checked)} />
+                    <span className={`text-sm font-bold ${newImportant ? 'text-amber-700 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}`}>⭐ 중요 기록으로 표시</span>
+                  </label>
                   <button onClick={handleSave} className="w-full py-4 bg-slate-800 dark:bg-indigo-600 hover:bg-slate-900 dark:hover:bg-indigo-500 text-white text-base font-bold rounded-xl shadow-sm transition-colors mt-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 dark:focus-visible:ring-indigo-400 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-800">기록 저장하기</button>
                 </div>
               </div>
@@ -685,10 +712,25 @@ function RecordsPage() {
                   </div>
                   <div className="flex-1 overflow-y-auto pr-2 space-y-4">
                     {classRecords.length > 0 ? classRecords.map(rec => (
-                      <div key={rec.id} className="bg-white dark:bg-slate-900/50 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700/50 group relative">
+                      <div key={rec.id} className={`p-5 rounded-2xl shadow-sm border group relative transition-colors ${rec.important ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-700/50' : 'bg-white dark:bg-slate-900/50 border-slate-100 dark:border-slate-700/50'}`}>
                         <div className="flex justify-between items-start mb-3">
-                          <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-sm font-black tracking-wider">{rec.date}</div>
-                          <button aria-label="기록 삭제" onClick={() => setConfirmDeleteId(rec.id)} className="text-rose-500 text-base font-bold opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity hover:underline focus:opacity-100 p-1">삭제</button>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-sm font-black tracking-wider">{rec.date}</div>
+                            {rec.important && <span className="text-xs font-black text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/40 px-2.5 py-1 rounded-lg border border-amber-200 dark:border-amber-700/50">⭐ 중요</span>}
+                          </div>
+                          <div className="flex items-center gap-1 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity focus-within:opacity-100">
+                            <button
+                              aria-label={rec.important ? '중요 해제' : '중요로 표시'}
+                              onClick={async () => {
+                                const updated = records.map(r => r.id === rec.id ? { ...r, important: !r.important } : r);
+                                try { await updateRecords(updated); } catch { addToast('변경에 실패했습니다.'); }
+                              }}
+                              className={`text-sm px-2.5 py-1 rounded-lg font-bold transition-colors focus:outline-none ${rec.important ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/30' : 'text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20'}`}
+                            >
+                              {rec.important ? '★' : '☆'}
+                            </button>
+                            <button aria-label="기록 삭제" onClick={() => setConfirmDeleteId(rec.id)} className="text-rose-500 text-base font-bold hover:underline focus:outline-none p-1">삭제</button>
+                          </div>
                         </div>
                         <div className="text-slate-700 dark:text-slate-200 text-base whitespace-pre-wrap leading-relaxed font-medium">{rec.content}</div>
                       </div>
