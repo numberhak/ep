@@ -881,51 +881,73 @@ function ManagePage() {
     }
   }, [currentWeekStart]);
 
-  // non-passive 터치 이벤트 등록 (React 합성이벤트는 iOS Safari에서 preventDefault 불가)
+  // iOS Safari용 non-passive 터치 스크롤 제어
+  // scrollContainerRef가 준비된 뒤 리스너를 붙이고, 언마운트 시 정리
   useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
+    // ref가 붙을 때까지 기다림 (분할화면 레이아웃 재계산 대응)
+    let container: HTMLDivElement | null = null;
+    let rafId: number;
 
-    const onTouchStart = (e: TouchEvent) => {
-      touchStartXRef.current = e.touches[0].clientX;
-      touchStartYRef.current = e.touches[0].clientY;
-      scrollLeftAtStartRef.current = container.scrollLeft;
-      scrollTopAtStartRef.current = container.scrollTop;
-      touchDirectionRef.current = null;
-    };
-
-    const onTouchMove = (e: TouchEvent) => {
-      const dx = e.touches[0].clientX - touchStartXRef.current;
-      const dy = e.touches[0].clientY - touchStartYRef.current;
-      const absDx = Math.abs(dx);
-      const absDy = Math.abs(dy);
-
-      // 방향이 아직 미결정이면 판별 (8px threshold로 오조작 방지)
-      if (!touchDirectionRef.current && (absDx > 8 || absDy > 8)) {
-        touchDirectionRef.current = absDx > absDy ? 'horizontal' : 'vertical';
+    const attach = () => {
+      container = scrollContainerRef.current;
+      if (!container) {
+        rafId = requestAnimationFrame(attach);
+        return;
       }
 
-      if (touchDirectionRef.current === 'horizontal') {
-        // 가로 스크롤: 브라우저 기본 세로 스크롤 & 바운스 차단
-        e.preventDefault();
-        // 시작 지점 기준 절대값 계산 (누적 오차 없음)
-        const newLeft = scrollLeftAtStartRef.current - dx;
-        // 범위 클램핑: 끝에서 튕김 원천 차단
-        container.scrollLeft = Math.max(0, Math.min(newLeft, container.scrollWidth - container.clientWidth));
-      } else if (touchDirectionRef.current === 'vertical') {
-        // 세로 스크롤: 가로 이동 차단
-        e.preventDefault();
-        const newTop = scrollTopAtStartRef.current - dy;
-        container.scrollTop = Math.max(0, Math.min(newTop, container.scrollHeight - container.clientHeight));
-      }
+      const onTouchStart = (e: TouchEvent) => {
+        if (!container) return;
+        touchStartXRef.current = e.touches[0].clientX;
+        touchStartYRef.current = e.touches[0].clientY;
+        scrollLeftAtStartRef.current = container.scrollLeft;
+        scrollTopAtStartRef.current = container.scrollTop;
+        touchDirectionRef.current = null;
+      };
+
+      const onTouchMove = (e: TouchEvent) => {
+        if (!container) return;
+        const dx = e.touches[0].clientX - touchStartXRef.current;
+        const dy = e.touches[0].clientY - touchStartYRef.current;
+        const absDx = Math.abs(dx);
+        const absDy = Math.abs(dy);
+
+        if (!touchDirectionRef.current && (absDx > 6 || absDy > 6)) {
+          touchDirectionRef.current = absDx >= absDy ? 'horizontal' : 'vertical';
+        }
+
+        // 방향이 결정되면 무조건 preventDefault — iOS 바운스/양방향 이동 원천 차단
+        if (touchDirectionRef.current) {
+          e.preventDefault();
+        }
+
+        if (touchDirectionRef.current === 'horizontal') {
+          const maxLeft = container.scrollWidth - container.clientWidth;
+          container.scrollLeft = Math.max(0, Math.min(scrollLeftAtStartRef.current - dx, maxLeft));
+        } else if (touchDirectionRef.current === 'vertical') {
+          const maxTop = container.scrollHeight - container.clientHeight;
+          container.scrollTop = Math.max(0, Math.min(scrollTopAtStartRef.current - dy, maxTop));
+        }
+      };
+
+      // touchstart: passive:true (스크롤 시작 지연 없음)
+      // touchmove: passive:false 필수 — iOS Safari에서 preventDefault 실제 작동
+      container.addEventListener('touchstart', onTouchStart, { passive: true });
+      container.addEventListener('touchmove', onTouchMove, { passive: false });
+
+      // cleanup 함수 저장
+      (container as any).__touchCleanup = () => {
+        container!.removeEventListener('touchstart', onTouchStart);
+        container!.removeEventListener('touchmove', onTouchMove);
+      };
     };
 
-    // passive: false 필수 — iOS Safari에서 preventDefault 작동하게 함
-    container.addEventListener('touchstart', onTouchStart, { passive: true });
-    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    rafId = requestAnimationFrame(attach);
+
     return () => {
-      container.removeEventListener('touchstart', onTouchStart);
-      container.removeEventListener('touchmove', onTouchMove);
+      cancelAnimationFrame(rafId);
+      if (container && (container as any).__touchCleanup) {
+        (container as any).__touchCleanup();
+      }
     };
   }, []);
 
@@ -1036,7 +1058,7 @@ function ManagePage() {
         </div>
       )}
 
-      <div ref={scrollContainerRef} className="flex-1 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-auto flex flex-col relative min-w-0" style={{ touchAction: 'none', overscrollBehavior: 'none' }}>
+      <div ref={scrollContainerRef} className="flex-1 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-auto flex flex-col relative min-w-0" style={{ overscrollBehavior: 'none', WebkitOverflowScrolling: 'auto' } as React.CSSProperties}>
         <div className="min-w-[700px]">
           {/* Header Row */}
           <div className="grid grid-cols-[60px_repeat(5,minmax(0,1fr))] bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-sm border-b border-gray-200 dark:border-slate-700 sticky top-0 z-10 shadow-sm min-h-[80px]">
