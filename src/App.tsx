@@ -1350,12 +1350,12 @@ function ManagePage() {
                           if (data.item.type === 'lesson') {
                             return (
                               <button key={idx} aria-label={`${data.classInfo.className} ${data.item.lesson?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left p-2.5 rounded-lg shadow-sm transition-all text-xs group focus:outline-none ${style.ring} focus-visible:ring-offset-1 ${style.bg} ${isSelected ? `border-l-[6px] ${style.leftBorder} border-y-transparent border-r-transparent shadow-md` : `border ${style.border} ${style.hover}`}`}>
-                                <div className="flex justify-between items-start mb-1.5">
-                                  <span className={`font-black ${style.text} opacity-90 flex items-center`}>
-                                    {data.classInfo.className} 
-                                    <span className="ml-1 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
-                                  </span>
-                                  <span className="text-[10px] bg-white/60 dark:bg-black/20 px-1.5 py-0.5 rounded font-bold dark:text-white/80">{data.item.lesson?.order}차시</span>
+                                <div className="flex justify-between items-center mb-1.5 gap-1">
+                                  <div className={`font-black ${style.text} opacity-90 flex items-center min-w-0 shrink`}>
+                                    <span className="truncate">{data.classInfo.className}</span>
+                                    <span className="ml-1 shrink-0 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
+                                  </div>
+                                  <span className="shrink-0 text-[10px] bg-white/60 dark:bg-black/20 px-1.5 py-0.5 rounded font-bold dark:text-white/80">{data.item.lesson?.order}차시</span>
                                 </div>
                                 <div className="font-bold text-gray-800 dark:text-gray-100 leading-snug truncate text-sm">{data.item.lesson?.title}</div>
                               </button>
@@ -1366,12 +1366,12 @@ function ManagePage() {
                             if (isReplace) {
                               return (
                                 <button key={idx} aria-label={`${data.classInfo.className} 내용변경 일정: ${data.item.event?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left p-2.5 rounded-lg shadow-sm transition-all text-xs group focus:outline-none ${style.ring} focus-visible:ring-offset-1 ${style.bg} ${isSelected ? `border-l-[6px] ${style.leftBorder} border-y-transparent border-r-transparent shadow-md` : `border ${style.border} ${style.hover}`}`}>
-                                  <div className="flex justify-between items-start mb-1.5">
-                                    <span className={`font-black ${style.text} opacity-90 flex items-center`}>
-                                      {data.classInfo.className}
-                                      <span className="ml-1 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
-                                    </span>
-                                    <span className="text-[10px] bg-white/60 dark:bg-black/20 px-1.5 py-0.5 rounded font-bold dark:text-white/80">내용변경</span>
+                                  <div className="flex justify-between items-center mb-1.5 gap-1">
+                                    <div className={`font-black ${style.text} opacity-90 flex items-center min-w-0 shrink`}>
+                                      <span className="truncate">{data.classInfo.className}</span>
+                                      <span className="ml-1 shrink-0 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
+                                    </div>
+                                    <span className="shrink-0 text-[10px] bg-white/60 dark:bg-black/20 px-1.5 py-0.5 rounded font-bold dark:text-white/80">내용변경</span>
                                   </div>
                                   <div className="font-bold text-gray-800 dark:text-gray-100 leading-snug truncate text-sm">{data.item.event?.title}</div>
                                 </button>
@@ -1385,12 +1385,12 @@ function ManagePage() {
                         
                               return (
                                 <button key={idx} aria-label={`${data.classInfo.className} ${typeText} 일정: ${data.item.event?.title}`} onClick={() => { setSelectedItem(data); setIsModifying(false); }} className={`w-full text-left ${eventBgClass} p-2.5 rounded-lg text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${eventBorderClass}`}>
-                                  <div className="flex justify-between items-start mb-1.5">
-                                    <span className={`font-black ${eventTextClass} opacity-90 flex items-center`}>
-                                      {data.classInfo.className}
-                                      <span className="ml-1 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
-                                    </span>
-                                    <span className={`text-[10px] ${eventBadgeClass} px-1.5 py-0.5 rounded font-bold`}>{typeText}</span>
+                                  <div className="flex justify-between items-center mb-1.5 gap-1">
+                                    <div className={`font-black ${eventTextClass} opacity-90 flex items-center min-w-0 shrink`}>
+                                      <span className="truncate">{data.classInfo.className}</span>
+                                      <span className="ml-1 shrink-0 text-[11px] font-bold opacity-80 bg-white/50 dark:bg-black/20 px-1 rounded-md">({data.classInfo.classScore || 0}점)</span>
+                                    </div>
+                                    <span className={`shrink-0 text-[10px] ${eventBadgeClass} px-1.5 py-0.5 rounded font-bold`}>{typeText}</span>
                                   </div>
                                   <div className="font-bold text-gray-800 dark:text-gray-100 leading-snug truncate text-sm">{data.item.event?.title}</div>
                                 </button>
