@@ -511,6 +511,190 @@ function TasksPage() {
 }
 
 // ==========================================
+// ScoreLogTab Component
+// ==========================================
+function ScoreLogTab({
+  classScoreLogs, scoreLogs, selectedClassId, activeClass, updateScoreLogs, addToast
+}: {
+  classScoreLogs: ScoreLog[];
+  scoreLogs: ScoreLog[];
+  selectedClassId: string;
+  activeClass: ClassSchedule | undefined;
+  updateScoreLogs: (data: ScoreLog[]) => Promise<void>;
+  addToast: (msg: string, type?: 'error' | 'success') => void;
+}) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isSelecting, setIsSelecting] = useState(false);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    const remaining = scoreLogs.filter(l => !selectedIds.has(l.id));
+    try {
+      await updateScoreLogs(remaining);
+      addToast(`${selectedIds.size}개의 이력을 삭제했습니다.`, 'success');
+      setSelectedIds(new Set());
+      setIsSelecting(false);
+    } catch { addToast('삭제에 실패했습니다.'); }
+  };
+
+  const handleDeleteAll = async () => {
+    const remaining = scoreLogs.filter(l => l.classId !== selectedClassId);
+    try {
+      await updateScoreLogs(remaining);
+      addToast('이 학급의 점수 이력을 모두 삭제했습니다.', 'success');
+      setSelectedIds(new Set());
+      setIsSelecting(false);
+    } catch { addToast('삭제에 실패했습니다.'); }
+  };
+
+  const colorStyle = activeClass ? COLOR_MAP[activeClass.color] : COLOR_MAP['blue'];
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden p-5 md:p-6">
+      {/* 헤더 */}
+      <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200 dark:border-slate-700 shrink-0 gap-3 flex-wrap">
+        <span className="text-sm font-bold text-slate-500 dark:text-slate-400">
+          {classScoreLogs.length}개의 점수 변경 이력
+          <span className="ml-2 text-xs text-slate-400 dark:text-slate-500 font-normal">(2주 이내)</span>
+        </span>
+        {classScoreLogs.length > 0 && (
+          <div className="flex items-center gap-2">
+            {isSelecting ? (
+              <>
+                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                  {selectedIds.size}개 선택됨
+                </span>
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={selectedIds.size === 0}
+                  className="text-xs font-bold text-white bg-rose-500 hover:bg-rose-600 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  선택 삭제
+                </button>
+                <button
+                  onClick={() => { setIsSelecting(false); setSelectedIds(new Set()); }}
+                  className="text-xs font-bold text-slate-500 dark:text-slate-400 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  취소
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setIsSelecting(true)}
+                  className="text-xs font-bold text-indigo-600 dark:text-indigo-400 px-3 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-800/50 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                >
+                  선택 삭제
+                </button>
+                <button
+                  onClick={handleDeleteAll}
+                  className="text-xs font-bold text-rose-500 hover:text-rose-600 px-3 py-1.5 rounded-lg border border-rose-200 dark:border-rose-800/50 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
+                >
+                  전체 삭제
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 전체 선택 체크박스 */}
+      {isSelecting && classScoreLogs.length > 0 && (
+        <div className="flex items-center gap-2 mb-3 px-1 shrink-0">
+          <input
+            type="checkbox"
+            id="select-all-logs"
+            checked={selectedIds.size === classScoreLogs.length}
+            onChange={e => {
+              if (e.target.checked) setSelectedIds(new Set(classScoreLogs.map(l => l.id)));
+              else setSelectedIds(new Set());
+            }}
+            className="w-4 h-4 rounded accent-indigo-500"
+          />
+          <label htmlFor="select-all-logs" className="text-xs font-bold text-slate-500 dark:text-slate-400 cursor-pointer">
+            전체 선택
+          </label>
+        </div>
+      )}
+
+      {/* 이력 목록 */}
+      <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+        {classScoreLogs.length > 0 ? classScoreLogs.map(log => {
+          const isPlus = log.amount > 0;
+          const isSelected = selectedIds.has(log.id);
+          return (
+            <div
+              key={log.id}
+              onClick={() => isSelecting && toggleSelect(log.id)}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl border shadow-sm transition-colors ${
+                isSelecting ? 'cursor-pointer' : ''
+              } ${
+                isSelected
+                  ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-300 dark:border-indigo-700'
+                  : 'bg-white dark:bg-slate-900/50 border-slate-100 dark:border-slate-700/50'
+              }`}
+            >
+              {/* 선택 모드 체크박스 */}
+              {isSelecting && (
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggleSelect(log.id)}
+                  onClick={e => e.stopPropagation()}
+                  className="w-4 h-4 rounded accent-indigo-500 shrink-0"
+                />
+              )}
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-base font-black shrink-0 ${isPlus ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' : 'bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400'}`}>
+                {isPlus ? '+' : '−'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-xs font-black px-2 py-0.5 rounded-md ${colorStyle.bg} ${colorStyle.text}`}>{log.label}</span>
+                  <span className={`text-base font-black ${isPlus ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {isPlus ? `+${log.amount}점` : `${log.amount}점`}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{log.date} {log.time}</div>
+              </div>
+              {/* 선택 모드 아닐 때 단건 삭제 */}
+              {!isSelecting && (
+                <button
+                  aria-label="이 이력 삭제"
+                  onClick={async e => {
+                    e.stopPropagation();
+                    try {
+                      await updateScoreLogs(scoreLogs.filter(l => l.id !== log.id));
+                      addToast('삭제되었습니다.', 'success');
+                    } catch { addToast('삭제에 실패했습니다.'); }
+                  }}
+                  className="shrink-0 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 p-1.5 rounded-lg transition-colors focus:outline-none"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              )}
+            </div>
+          );
+        }) : (
+          <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 pt-12">
+            <span className="text-4xl mb-3">🏅</span>
+            <p className="font-bold text-base">아직 점수 변경 이력이 없습니다.</p>
+            <p className="text-sm mt-1">위의 점수 카드에서 점수를 변경해보세요.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
 // RecordsPage
 // ==========================================
 function ScoreCard({ title, score, onUpdate, colorStyle }: { title: string; score: number; onUpdate: (amount: number) => void; colorStyle: any }) {
@@ -556,7 +740,11 @@ function RecordsPage() {
   const activeClass = classes.find(c => c.classId === selectedClassId);
   const classRecords = records.filter(r => r.classId === selectedClassId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const importantRecords = classRecords.filter(r => r.important);
-  const classScoreLogs = scoreLogs.filter(l => l.classId === selectedClassId).sort((a, b) => `${b.date}${b.time}` < `${a.date}${a.time}` ? -1 : 1);
+  // 2주 이내 이력만 표시 (오래된 건 자동 제외)
+  const twoWeeksAgo = dateUtils.formatDate(dateUtils.addDays(new Date(), -14));
+  const classScoreLogs = scoreLogs
+    .filter(l => l.classId === selectedClassId && l.date >= twoWeeksAgo)
+    .sort((a, b) => (`${b.date}${b.time}` < `${a.date}${a.time}` ? -1 : 1));
 
   const handleSave = async () => {
     if (!newContent.trim() || !selectedClassId) return;
@@ -568,13 +756,37 @@ function RecordsPage() {
     try { await updateRecords(records.filter(r => r.id !== id)); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } finally { setConfirmDeleteId(null); }
   };
 
-  const handleUpdateScore = async (type: 'class' | 'group', amount: number, index?: number) => {
+  // 점수 디바운스: pending 상태를 ref로 관리해 빠른 연속 클릭을 1회 저장으로 묶음
+  const pendingScoreRef = useRef<{
+    classScore: number;
+    groupScores: number[];
+    logs: ScoreLog[];
+  } | null>(null);
+  const scoreDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleUpdateScore = (type: 'class' | 'group', amount: number, index?: number) => {
     if (!activeClass) return;
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
     const label = type === 'class' ? '학급 전체' : `${(index ?? 0) + 1}모둠`;
+
+    // pending이 없으면 현재 값으로 초기화
+    if (!pendingScoreRef.current) {
+      pendingScoreRef.current = {
+        classScore: activeClass.classScore ?? 0,
+        groupScores: [...(activeClass.groupScores ?? [0,0,0,0,0])],
+        logs: [],
+      };
+    }
+
+    // pending에 누적
+    if (type === 'class') {
+      pendingScoreRef.current.classScore += amount;
+    } else if (type === 'group' && index !== undefined) {
+      pendingScoreRef.current.groupScores[index] += amount;
+    }
     const newLog: ScoreLog = {
-      id: `sl-${Date.now()}`,
+      id: `sl-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
       classId: activeClass.classId,
       date: dateUtils.formatDate(now),
       time: timeStr,
@@ -583,22 +795,46 @@ function RecordsPage() {
       amount,
       label,
     };
-    const updatedClasses = classes.map(c => {
+    pendingScoreRef.current.logs.unshift(newLog);
+
+    // UI는 즉시 반영 (낙관적 업데이트)
+    const optimisticClasses = classes.map(c => {
       if (c.classId !== activeClass.classId) return c;
-      const currentClassScore = c.classScore ?? 0;
-      const currentGroupScores = c.groupScores ?? [0, 0, 0, 0, 0];
-      if (type === 'class') return { ...c, classScore: currentClassScore + amount };
+      if (type === 'class') return { ...c, classScore: pendingScoreRef.current!.classScore };
       if (type === 'group' && index !== undefined) {
-        const newGroups = [...currentGroupScores];
-        newGroups[index] = newGroups[index] + amount;
-        return { ...c, groupScores: newGroups };
+        return { ...c, groupScores: [...pendingScoreRef.current!.groupScores] };
       }
       return c;
     });
-    try {
-      await updateClasses(updatedClasses);
-      await updateScoreLogs([newLog, ...scoreLogs]);
-    } catch { addToast('점수 저장에 실패했습니다.'); }
+    updateClasses(optimisticClasses);
+
+    // 2주 지난 이력 자동 정리
+    const twoWeeksAgo = dateUtils.formatDate(dateUtils.addDays(new Date(), -14));
+    const freshLogs = scoreLogs.filter(l => l.date >= twoWeeksAgo);
+    updateScoreLogs([...pendingScoreRef.current.logs, ...freshLogs.filter(l => l.classId !== activeClass.classId || !pendingScoreRef.current!.logs.find(pl => pl.id === l.id))]);
+
+    // 1.2초 후 Firestore에 실제 저장 (디바운스)
+    if (scoreDebounceTimer.current) clearTimeout(scoreDebounceTimer.current);
+    scoreDebounceTimer.current = setTimeout(async () => {
+      try {
+        const finalClasses = classes.map(c => {
+          if (c.classId !== activeClass.classId) return c;
+          return {
+            ...c,
+            classScore: pendingScoreRef.current!.classScore,
+            groupScores: [...pendingScoreRef.current!.groupScores],
+          };
+        });
+        const allFreshLogs = scoreLogs.filter(l => l.date >= twoWeeksAgo);
+        const merged = [
+          ...pendingScoreRef.current!.logs,
+          ...allFreshLogs.filter(l => !pendingScoreRef.current!.logs.find(pl => pl.id === l.id))
+        ];
+        await updateClasses(finalClasses);
+        await updateScoreLogs(merged);
+        pendingScoreRef.current = null;
+      } catch { addToast('점수 저장에 실패했습니다.'); }
+    }, 1200);
   };
 
   const handleExportCSV = () => {
@@ -740,53 +976,14 @@ function RecordsPage() {
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 flex flex-col overflow-hidden p-5 md:p-6">
-                  <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200 dark:border-slate-700 shrink-0 gap-3">
-                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{classScoreLogs.length}개의 점수 변경 이력</span>
-                    {classScoreLogs.length > 0 && (
-                      <button
-                        onClick={async () => {
-                          const remaining = scoreLogs.filter(l => l.classId !== selectedClassId);
-                          await updateScoreLogs(remaining);
-                          addToast('이 학급의 점수 이력을 모두 삭제했습니다.', 'success');
-                        }}
-                        className="text-xs font-bold text-rose-500 hover:text-rose-600 px-3 py-1.5 rounded-lg border border-rose-200 dark:border-rose-800/50 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
-                      >
-                        전체 삭제
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                    {classScoreLogs.length > 0 ? classScoreLogs.map(log => {
-                      const isPlus = log.amount > 0;
-                      const colorStyle = COLOR_MAP[activeClass.color];
-                      return (
-                        <div key={log.id} className="flex items-center justify-between bg-white dark:bg-slate-900/50 px-4 py-3 rounded-xl border border-slate-100 dark:border-slate-700/50 shadow-sm gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-base font-black shrink-0 ${isPlus ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' : 'bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400'}`}>
-                              {isPlus ? '+' : '−'}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className={`text-xs font-black px-2 py-0.5 rounded-md ${colorStyle.bg} ${colorStyle.text}`}>{log.label}</span>
-                                <span className={`text-base font-black ${isPlus ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                                  {isPlus ? `+${log.amount}점` : `${log.amount}점`}
-                                </span>
-                              </div>
-                              <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{log.date} {log.time}</div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }) : (
-                      <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 pt-12">
-                        <span className="text-4xl mb-3">🏅</span>
-                        <p className="font-bold text-base">아직 점수 변경 이력이 없습니다.</p>
-                        <p className="text-sm mt-1">위의 점수 카드에서 점수를 변경해보세요.</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <ScoreLogTab
+                  classScoreLogs={classScoreLogs}
+                  scoreLogs={scoreLogs}
+                  selectedClassId={selectedClassId}
+                  activeClass={activeClass}
+                  updateScoreLogs={updateScoreLogs}
+                  addToast={addToast}
+                />
               )}
             </div>
           </div>
