@@ -962,6 +962,9 @@ function RecordsPage() {
     logs: ScoreLog[];
   } | null>(null);
   const scoreDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // scoreLogs의 최신값을 항상 참조하기 위한 ref (클로저 stale 문제 방지)
+  const scoreLogsRef = useRef<ScoreLog[]>(scoreLogs);
+  useEffect(() => { scoreLogsRef.current = scoreLogs; }, [scoreLogs]);
 
   const handleUpdateScore = (type: 'class' | 'group', amount: number, index?: number) => {
     if (!activeClass) return;
@@ -1007,9 +1010,9 @@ function RecordsPage() {
     });
     updateClasses(optimisticClasses);
 
-    // 2주 지난 이력 자동 정리
+    // 2주 이내 기존 이력을 누적 보존 (scoreLogsRef로 최신값 참조)
     const twoWeeksAgo = dateUtils.formatDate(dateUtils.addDays(new Date(), -14));
-    const freshLogs = scoreLogs.filter(l => l.date >= twoWeeksAgo);
+    const freshLogs = scoreLogsRef.current.filter(l => l.date >= twoWeeksAgo);
     updateScoreLogs([...pendingScoreRef.current.logs, ...freshLogs.filter(l => l.classId !== activeClass.classId || !pendingScoreRef.current!.logs.find(pl => pl.id === l.id))]);
 
     // 1.2초 후 Firestore에 실제 저장 (디바운스)
@@ -1024,7 +1027,8 @@ function RecordsPage() {
             groupScores: [...pendingScoreRef.current!.groupScores],
           };
         });
-        const allFreshLogs = scoreLogs.filter(l => l.date >= twoWeeksAgo);
+        // 디바운스 실행 시점의 최신 scoreLogs를 ref로 참조해 기존 이력 보존
+        const allFreshLogs = scoreLogsRef.current.filter(l => l.date >= twoWeeksAgo);
         const merged = [
           ...pendingScoreRef.current!.logs,
           ...allFreshLogs.filter(l => !pendingScoreRef.current!.logs.find(pl => pl.id === l.id))
