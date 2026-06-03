@@ -962,9 +962,6 @@ function RecordsPage() {
     logs: ScoreLog[];
   } | null>(null);
   const scoreDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // scoreLogs의 최신값을 항상 참조하기 위한 ref (클로저 stale 문제 방지)
-  const scoreLogsRef = useRef<ScoreLog[]>(scoreLogs);
-  useEffect(() => { scoreLogsRef.current = scoreLogs; }, [scoreLogs]);
 
   const handleUpdateScore = (type: 'class' | 'group', amount: number, index?: number) => {
     if (!activeClass) return;
@@ -1010,9 +1007,9 @@ function RecordsPage() {
     });
     updateClasses(optimisticClasses);
 
-    // 2주 이내 기존 이력을 누적 보존 (scoreLogsRef로 최신값 참조)
+    // 2주 지난 이력 자동 정리
     const twoWeeksAgo = dateUtils.formatDate(dateUtils.addDays(new Date(), -14));
-    const freshLogs = scoreLogsRef.current.filter(l => l.date >= twoWeeksAgo);
+    const freshLogs = scoreLogs.filter(l => l.date >= twoWeeksAgo);
     updateScoreLogs([...pendingScoreRef.current.logs, ...freshLogs.filter(l => l.classId !== activeClass.classId || !pendingScoreRef.current!.logs.find(pl => pl.id === l.id))]);
 
     // 1.2초 후 Firestore에 실제 저장 (디바운스)
@@ -1027,8 +1024,7 @@ function RecordsPage() {
             groupScores: [...pendingScoreRef.current!.groupScores],
           };
         });
-        // 디바운스 실행 시점의 최신 scoreLogs를 ref로 참조해 기존 이력 보존
-        const allFreshLogs = scoreLogsRef.current.filter(l => l.date >= twoWeeksAgo);
+        const allFreshLogs = scoreLogs.filter(l => l.date >= twoWeeksAgo);
         const merged = [
           ...pendingScoreRef.current!.logs,
           ...allFreshLogs.filter(l => !pendingScoreRef.current!.logs.find(pl => pl.id === l.id))
@@ -2410,6 +2406,10 @@ export default function App() {
         const ts = data.tasks || [];
         const ps = data.profile || DEFAULT_PROFILE;
         const ms = data.menuOrder || DEFAULT_MENU_ORDER;
+        const sl = (data.scoreLogs || []).filter((log: ScoreLog) => {
+          const twoWeeksAgo = new Date(); twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+          return new Date(log.date) >= twoWeeksAgo;
+        });
         setLessonsState(ls);
         setLessonPlansState(lps);
         setClassesState(cs);
@@ -2419,6 +2419,7 @@ export default function App() {
         setTasksState(ts);
         setProfileState(ps);
         setMenuOrderState(ms);
+        setScoreLogsState(sl);
         // 다음 접속 시 즉시 표시를 위해 로컬에도 캐시
         saveToLocal('lessons', ls);
         saveToLocal('lessonPlans', lps);
@@ -2429,8 +2430,9 @@ export default function App() {
         saveToLocal('tasks', ts);
         saveToLocal('profile', ps);
         saveToLocal('menuOrder', ms);
+        saveToLocal('scoreLogs', sl);
       } else {
-        setDoc(docRef, { lessons: MOCK_LESSONS, lessonPlans: DEFAULT_LESSON_PLANS, classes: MOCK_SCHEDULES, holidays: MOCK_HOLIDAYS, events: [], records: [], tasks: MOCK_TASKS, profile: DEFAULT_PROFILE, menuOrder: DEFAULT_MENU_ORDER }, { merge: true });
+        setDoc(docRef, { lessons: MOCK_LESSONS, lessonPlans: DEFAULT_LESSON_PLANS, classes: MOCK_SCHEDULES, holidays: MOCK_HOLIDAYS, events: [], records: [], tasks: MOCK_TASKS, profile: DEFAULT_PROFILE, menuOrder: DEFAULT_MENU_ORDER, scoreLogs: [] }, { merge: true });
       }
       setIsLoaded(true);
     }, () => { setIsLoaded(true); });
@@ -2454,7 +2456,7 @@ export default function App() {
     tasks: tasksState, updateTasks: async (data) => { setTasksState(data); if (!isFirebaseEnabled) saveToLocal('tasks', data); else await updateFirestoreField('tasks', data); },
     profile: profileState, updateProfile: async (data) => { setProfileState(data); if (!isFirebaseEnabled) saveToLocal('profile', data); else await updateFirestoreField('profile', data); },
     menuOrder: menuOrderState, updateMenuOrder: async (data) => { setMenuOrderState(data); if (!isFirebaseEnabled) saveToLocal('menuOrder', data); else await updateFirestoreField('menuOrder', data); },
-    scoreLogs: scoreLogsState, updateScoreLogs: async (data) => { setScoreLogsState(data); saveToLocal('scoreLogs', data); },
+    scoreLogs: scoreLogsState, updateScoreLogs: async (data) => { setScoreLogsState(data); saveToLocal('scoreLogs', data); if (isFirebaseEnabled) await updateFirestoreField('scoreLogs', data); },
     goToPage: (page, params) => { setActivePage(page); setPageParams(params); },
     pageParams,
   };
@@ -2503,7 +2505,7 @@ export default function App() {
               <div className="p-5 pb-2">
                 <div className="flex items-center gap-3 text-white mb-2 overflow-hidden">
                   <div className="p-2 bg-indigo-500 rounded-xl shadow-lg shrink-0"><IconCalendar /></div>
-                  {sidebarWidth >= 160 && <span className="text-lg font-black tracking-tight truncate">에듀플래너</span>}
+                  {sidebarWidth >= 160 && <span className="text-lg font-black tracking-tight truncate">CE수첩</span>}
                 </div>
                 {sidebarWidth >= 160 && (
                   <div className="text-[10px] font-bold text-slate-500 px-1 uppercase tracking-widest flex items-center gap-2">
@@ -2585,11 +2587,11 @@ export default function App() {
           /* ── 하단 탭바 레이아웃 (windowWidth < 800) ── */
           <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }} className="bg-white dark:bg-slate-900 font-sans text-slate-900 dark:text-slate-100 selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
             <header className="bg-slate-900 px-5 py-4 flex items-center justify-between shrink-0 shadow-md z-20">
-              <div className="flex items-center gap-2.5 text-white">
+              <button onClick={() => { setActivePage('manage'); setPageParams(null); }} className="flex items-center gap-2.5 text-white focus:outline-none active:opacity-70 transition-opacity">
                 <div className="p-1.5 bg-indigo-500 rounded-lg"><IconCalendar /></div>
-                <span className="text-lg font-black tracking-tight">에듀플래너</span>
+                <span className="text-lg font-black tracking-tight">CE수첩</span>
                 <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`}></span>
-              </div>
+              </button>
               <button aria-label="프로필 설정 수정" onClick={() => setIsProfileModalOpen(true)} className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-sm uppercase focus:outline-none shadow-inner">
                 {profileState.name.charAt(0) || 'U'}
               </button>
