@@ -197,6 +197,7 @@ interface AppContextType {
   lessons: Lesson[];       updateLessons: (data: Lesson[]) => Promise<void>;
   lessonPlans: LessonPlan[]; updateLessonPlans: (data: LessonPlan[]) => Promise<void>;
   classes: ClassSchedule[]; updateClasses: (data: ClassSchedule[]) => Promise<void>;
+  setClassesOptimistic: (data: ClassSchedule[]) => void;
   holidays: Holiday[];     updateHolidays: (data: Holiday[]) => Promise<void>;
   events: ClassEvent[];    updateEvents: (data: ClassEvent[]) => Promise<void>;
   records: ClassRecord[];  updateRecords: (data: ClassRecord[]) => Promise<void>;
@@ -204,6 +205,7 @@ interface AppContextType {
   profile: UserProfile;    updateProfile: (data: UserProfile) => Promise<void>;
   menuOrder: string[];     updateMenuOrder: (data: string[]) => Promise<void>;
   scoreLogs: ScoreLog[];   updateScoreLogs: (data: ScoreLog[]) => Promise<void>;
+  setScoreLogsOptimistic: (data: ScoreLog[]) => void;
   goToPage: (page: 'manage' | 'plan' | 'settings' | 'records' | 'tasks', params?: any) => void;
   pageParams: any;
 }
@@ -921,7 +923,7 @@ function ScoreCard({ title, score, onUpdate, colorStyle }: { title: string; scor
 }
 
 function RecordsPage() {
-  const { classes, updateClasses, records, updateRecords, scoreLogs, updateScoreLogs, pageParams } = useContext(AppContext)!;
+  const { classes, updateClasses, setClassesOptimistic, records, updateRecords, scoreLogs, updateScoreLogs, setScoreLogsOptimistic, pageParams } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
 
   const [selectedClassId, setSelectedClassId] = useState<string>(pageParams?.classId || (classes[0]?.classId || ''));
@@ -955,8 +957,15 @@ function RecordsPage() {
     try { await updateRecords(records.filter(r => r.id !== id)); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } finally { setConfirmDeleteId(null); }
   };
 
+  // stale closure 방지: classes/scoreLogs 최신값을 ref로 유지
+  const latestClassesRef = useRef(classes);
+  const latestScoreLogsRef = useRef(scoreLogs);
+  useEffect(() => { latestClassesRef.current = classes; }, [classes]);
+  useEffect(() => { latestScoreLogsRef.current = scoreLogs; }, [scoreLogs]);
+
   // 점수 디바운스: pending 상태를 ref로 관리해 빠른 연속 클릭을 1회 저장으로 묶음
   const pendingScoreRef = useRef<{
+    classId: string;
     classScore: number;
     groupScores: number[];
     logs: ScoreLog[];
@@ -972,6 +981,7 @@ function RecordsPage() {
     // pending이 없으면 현재 값으로 초기화
     if (!pendingScoreRef.current) {
       pendingScoreRef.current = {
+        classId: activeClass.classId,
         classScore: activeClass.classScore ?? 0,
         groupScores: [...(activeClass.groupScores ?? [0,0,0,0,0])],
         logs: [],
@@ -996,8 +1006,12 @@ function RecordsPage() {
     };
     pendingScoreRef.current.logs.unshift(newLog);
 
-    // UI는 즉시 반영 (낙관적 업데이트)
-    const optimisticClasses = classes.map(c => {
+    // UI는 즉시 반영 (낙관적 업데이트) — Firebase 저장은 하지 않음
+    const twoWeeksAgo = dateUtils.formatDate(dateUtils.addDays(new Date(), -14));
+    const currentClasses = latestClassesRef.current;
+    const currentLogs = latestScoreLogsRef.current;
+
+    const optimisticClasses = currentClasses.map(c => {
       if (c.classId !== activeClass.classId) return c;
       if (type === 'class') return { ...c, classScore: pendingScoreRef.current!.classScore };
       if (type === 'group' && index !== undefined) {
@@ -1005,29 +1019,38 @@ function RecordsPage() {
       }
       return c;
     });
-    updateClasses(optimisticClasses);
+    // 상태만 업데이트 (Firebase 저장 제외)
+    const freshLogs = currentLogs.filter(l => l.date >= twoWeeksAgo);
+    const optimisticLogs = [
+      ...pendingScoreRef.current.logs,
+      ...freshLogs.filter(l => !pendingScoreRef.current!.logs.find(pl => pl.id === l.id)),
+    ];
+    // 낙관적 UI: 상태만 갱신, Firebase는 디바운스 후 한번에 저장
+    setClassesOptimistic(optimisticClasses);
+    setScoreLogsOptimistic(optimisticLogs);
 
-    // 2주 지난 이력 자동 정리
-    const twoWeeksAgo = dateUtils.formatDate(dateUtils.addDays(new Date(), -14));
-    const freshLogs = scoreLogs.filter(l => l.date >= twoWeeksAgo);
-    updateScoreLogs([...pendingScoreRef.current.logs, ...freshLogs.filter(l => l.classId !== activeClass.classId || !pendingScoreRef.current!.logs.find(pl => pl.id === l.id))]);
-
-    // 1.2초 후 Firestore에 실제 저장 (디바운스)
+    // 1.2초 후 Firebase에 최종값으로 한번만 저장 (디바운스)
     if (scoreDebounceTimer.current) clearTimeout(scoreDebounceTimer.current);
     scoreDebounceTimer.current = setTimeout(async () => {
+      if (!pendingScoreRef.current) return;
       try {
-        const finalClasses = classes.map(c => {
-          if (c.classId !== activeClass.classId) return c;
+        // 타이머 실행 시점의 최신 ref 값 사용 (stale closure 방지)
+        const latestClasses = latestClassesRef.current;
+        const latestLogs = latestScoreLogsRef.current;
+        const finalClassId = pendingScoreRef.current.classId;
+
+        const finalClasses = latestClasses.map(c => {
+          if (c.classId !== finalClassId) return c;
           return {
             ...c,
             classScore: pendingScoreRef.current!.classScore,
             groupScores: [...pendingScoreRef.current!.groupScores],
           };
         });
-        const allFreshLogs = scoreLogs.filter(l => l.date >= twoWeeksAgo);
+        const allFreshLogs = latestLogs.filter(l => l.date >= twoWeeksAgo);
         const merged = [
           ...pendingScoreRef.current!.logs,
-          ...allFreshLogs.filter(l => !pendingScoreRef.current!.logs.find(pl => pl.id === l.id))
+          ...allFreshLogs.filter(l => !pendingScoreRef.current!.logs.find(pl => pl.id === l.id)),
         ];
         await updateClasses(finalClasses);
         await updateScoreLogs(merged);
@@ -2450,6 +2473,7 @@ export default function App() {
     lessons: lessonsState, updateLessons: async (data) => { setLessonsState(data); if (!isFirebaseEnabled) saveToLocal('lessons', data); else await updateFirestoreField('lessons', data); },
     lessonPlans: lessonPlansState, updateLessonPlans: async (data) => { setLessonPlansState(data); if (!isFirebaseEnabled) saveToLocal('lessonPlans', data); else await updateFirestoreField('lessonPlans', data); },
     classes: classesState, updateClasses: async (data) => { setClassesState(data); if (!isFirebaseEnabled) saveToLocal('classes', data); else await updateFirestoreField('classes', data); },
+    setClassesOptimistic: (data) => { setClassesState(data); },
     holidays: holidaysState, updateHolidays: async (data) => { setHolidaysState(data); if (!isFirebaseEnabled) saveToLocal('holidays', data); else await updateFirestoreField('holidays', data); },
     events: eventsState, updateEvents: async (data) => { setEventsState(data); if (!isFirebaseEnabled) saveToLocal('events', data); else await updateFirestoreField('events', data); },
     records: recordsState, updateRecords: async (data) => { setRecordsState(data); if (!isFirebaseEnabled) saveToLocal('records', data); else await updateFirestoreField('records', data); },
@@ -2457,6 +2481,7 @@ export default function App() {
     profile: profileState, updateProfile: async (data) => { setProfileState(data); if (!isFirebaseEnabled) saveToLocal('profile', data); else await updateFirestoreField('profile', data); },
     menuOrder: menuOrderState, updateMenuOrder: async (data) => { setMenuOrderState(data); if (!isFirebaseEnabled) saveToLocal('menuOrder', data); else await updateFirestoreField('menuOrder', data); },
     scoreLogs: scoreLogsState, updateScoreLogs: async (data) => { setScoreLogsState(data); saveToLocal('scoreLogs', data); if (isFirebaseEnabled) await updateFirestoreField('scoreLogs', data); },
+    setScoreLogsOptimistic: (data) => { setScoreLogsState(data); },
     goToPage: (page, params) => { setActivePage(page); setPageParams(params); },
     pageParams,
   };
