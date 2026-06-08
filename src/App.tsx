@@ -206,6 +206,7 @@ interface AppContextType {
   menuOrder: string[];     updateMenuOrder: (data: string[]) => Promise<void>;
   scoreLogs: ScoreLog[];   updateScoreLogs: (data: ScoreLog[]) => Promise<void>;
   setScoreLogsOptimistic: (data: ScoreLog[]) => void;
+  pendingScoreRef: React.MutableRefObject<{ classId: string; classScore: number; groupScores: number[]; logs: ScoreLog[]; } | null>;
   goToPage: (page: 'manage' | 'plan' | 'settings' | 'records' | 'tasks', params?: any) => void;
   pageParams: any;
 }
@@ -935,7 +936,7 @@ function ScoreCard({ title, score, onUpdate, colorStyle }: { title: string; scor
 }
 
 function RecordsPage() {
-  const { classes, updateClasses, setClassesOptimistic, records, updateRecords, scoreLogs, updateScoreLogs, setScoreLogsOptimistic, pageParams } = useContext(AppContext)!;
+  const { classes, updateClasses, setClassesOptimistic, records, updateRecords, scoreLogs, updateScoreLogs, setScoreLogsOptimistic, pendingScoreRef, pageParams } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
 
   const [selectedClassId, setSelectedClassId] = useState<string>(pageParams?.classId || (classes[0]?.classId || ''));
@@ -975,13 +976,7 @@ function RecordsPage() {
   useEffect(() => { latestClassesRef.current = classes; }, [classes]);
   useEffect(() => { latestScoreLogsRef.current = scoreLogs; }, [scoreLogs]);
 
-  // 점수 디바운스: pending 상태를 ref로 관리해 빠른 연속 클릭을 1회 저장으로 묶음
-  const pendingScoreRef = useRef<{
-    classId: string;
-    classScore: number;
-    groupScores: number[];
-    logs: ScoreLog[];
-  } | null>(null);
+  // 점수 디바운스: App 레벨 pendingScoreRef 사용 (snapshot 충돌 방지)
   const scoreDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleUpdateScore = (type: 'class' | 'group', amount: number, index?: number) => {
@@ -2384,6 +2379,14 @@ export default function App() {
   const [scoreLogsState, setScoreLogsState] = useState<ScoreLog[]>(() => loadFromLocal('scoreLogs', []));
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
+  // App 레벨 pending ref: 점수 디바운스 저장 중인지 snapshot이 확인할 수 있도록
+  const appPendingScoreRef = useRef<{
+    classId: string;
+    classScore: number;
+    groupScores: number[];
+    logs: ScoreLog[];
+  } | null>(null);
+
   // 창 너비 기반 레이아웃 분기 (기준점 800으로 수정 - 패드 화면분할 지원 강화)
   const [windowWidth, setWindowWidth] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 1024);
   useEffect(() => {
@@ -2447,16 +2450,17 @@ export default function App() {
         });
         setLessonsState(ls);
         setLessonPlansState(lps);
-        // pending 점수 변경 중에는 classScore/groupScores를 snapshot으로 덮어쓰지 않음
+        // pending 중인 학급의 classScore/groupScores만 보호, 나머지는 snapshot 그대로 반영
         setClassesState(prev => {
-          if (prev.length === 0) return cs;
+          const pending = appPendingScoreRef.current;
+          if (!pending || prev.length === 0) return cs;
           return cs.map((incoming: ClassSchedule) => {
-            const existing = prev.find(p => p.classId === incoming.classId);
-            if (!existing) return incoming;
+            if (incoming.classId !== pending.classId) return incoming;
+            // 현재 pending 중인 학급만 낙관적 값 유지
             return {
               ...incoming,
-              classScore: existing.classScore,
-              groupScores: existing.groupScores,
+              classScore: pending.classScore,
+              groupScores: [...pending.groupScores],
             };
           });
         });
@@ -2466,12 +2470,14 @@ export default function App() {
         setTasksState(ts);
         setProfileState(ps);
         setMenuOrderState(ms);
-        // pending 중 낙관적으로 추가된 로그 보존
-        setScoreLogsState(prev => {
-          if (prev.length === 0) return sl;
+        // pending 중 낙관적으로 추가된 로그만 보존 (삭제된 로그는 복원 안 함)
+        setScoreLogsState(() => {
+          const pending = appPendingScoreRef.current;
+          if (!pending || pending.logs.length === 0) return sl;
+          // pending.logs 중 Firebase에 아직 없는 것(방금 추가된 것)만 앞에 붙임
           const slIds = new Set(sl.map((l: ScoreLog) => l.id));
-          const extra = prev.filter(l => !slIds.has(l.id));
-          return extra.length > 0 ? [...extra, ...sl] : sl;
+          const newLogs = pending.logs.filter(l => !slIds.has(l.id));
+          return newLogs.length > 0 ? [...newLogs, ...sl] : sl;
         });
         // 다음 접속 시 즉시 표시를 위해 로컬에도 캐시
         saveToLocal('lessons', ls);
@@ -2512,6 +2518,7 @@ export default function App() {
     menuOrder: menuOrderState, updateMenuOrder: async (data) => { setMenuOrderState(data); if (!isFirebaseEnabled) saveToLocal('menuOrder', data); else await updateFirestoreField('menuOrder', data); },
     scoreLogs: scoreLogsState, updateScoreLogs: async (data) => { setScoreLogsState(data); saveToLocal('scoreLogs', data); if (isFirebaseEnabled) await updateFirestoreField('scoreLogs', data); },
     setScoreLogsOptimistic: (data) => { setScoreLogsState(data); },
+    pendingScoreRef: appPendingScoreRef,
     goToPage: (page, params) => { setActivePage(page); setPageParams(params); },
     pageParams,
   };
