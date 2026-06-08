@@ -899,23 +899,35 @@ function ScoreLogTab({
 // RecordsPage
 // ==========================================
 function ScoreCard({ title, score, onUpdate, colorStyle }: { title: string; score: number; onUpdate: (amount: number) => void; colorStyle: any }) {
-  const [customInput, setCustomInput] = useState<number | ''>('');
+  const [customInput, setCustomInput] = useState('');
   const handleApply = () => {
-    if (customInput === '' || isNaN(Number(customInput))) return;
-    onUpdate(Number(customInput));
+    const val = parseFloat(customInput);
+    if (customInput.trim() === '' || isNaN(val)) return;
+    const rounded = Math.round(val * 100) / 100;
+    onUpdate(rounded);
     setCustomInput('');
   };
+  const displayScore = Number.isInteger(score) ? score : parseFloat(score.toFixed(2));
 
   return (
     <div className="bg-white/80 dark:bg-slate-800/80 p-4 md:p-5 rounded-2xl shadow-sm border border-white dark:border-slate-700 min-w-[160px] flex-1 flex flex-col backdrop-blur-sm shrink-0 snap-center">
       <div className={`text-sm md:text-sm font-black ${colorStyle.text} opacity-80 mb-1`}>{title}</div>
-      <div className="text-4xl md:text-3xl font-black text-gray-800 dark:text-white mb-4">{score}점</div>
+      <div className="text-4xl md:text-3xl font-black text-gray-800 dark:text-white mb-4">{displayScore}점</div>
       <div className="flex gap-2 mb-3">
         <button aria-label={`${title} 1점 추가`} onClick={() => onUpdate(1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-xl text-lg md:text-base font-black py-3 md:py-2 transition-colors shadow-sm">+1</button>
         <button aria-label={`${title} 1점 차감`} onClick={() => onUpdate(-1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-xl text-lg md:text-base font-black py-3 md:py-2 transition-colors shadow-sm">-1</button>
       </div>
       <div className="flex gap-2 mt-auto">
-        <input type="number" aria-label={`${title} 사용자 입력 점수`} value={customInput} onChange={e => setCustomInput(e.target.value === '' ? '' : Number(e.target.value))} className="w-full text-base border border-gray-200 dark:border-slate-600 p-3 rounded-xl text-center font-bold outline-none focus:border-indigo-500 dark:focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white" placeholder="점수" />
+        <input
+          type="number"
+          step="0.01"
+          aria-label={`${title} 사용자 입력 점수`}
+          value={customInput}
+          onChange={e => setCustomInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleApply()}
+          className="w-full text-base border border-gray-200 dark:border-slate-600 p-3 rounded-xl text-center font-bold outline-none focus:border-indigo-500 dark:focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
+          placeholder="점수 (소수 가능)"
+        />
         <button aria-label={`${title} 점수 반영`} onClick={handleApply} className="bg-slate-800 dark:bg-indigo-600 text-white text-sm px-4 rounded-xl font-bold hover:bg-slate-700 dark:hover:bg-indigo-500 whitespace-nowrap shadow-sm">반영</button>
       </div>
     </div>
@@ -2435,14 +2447,32 @@ export default function App() {
         });
         setLessonsState(ls);
         setLessonPlansState(lps);
-        setClassesState(cs);
+        // pending 점수 변경 중에는 classScore/groupScores를 snapshot으로 덮어쓰지 않음
+        setClassesState(prev => {
+          if (prev.length === 0) return cs;
+          return cs.map((incoming: ClassSchedule) => {
+            const existing = prev.find(p => p.classId === incoming.classId);
+            if (!existing) return incoming;
+            return {
+              ...incoming,
+              classScore: existing.classScore,
+              groupScores: existing.groupScores,
+            };
+          });
+        });
         setHolidaysState(hs);
         setEventsState(es);
         setRecordsState(rs);
         setTasksState(ts);
         setProfileState(ps);
         setMenuOrderState(ms);
-        setScoreLogsState(sl);
+        // pending 중 낙관적으로 추가된 로그 보존
+        setScoreLogsState(prev => {
+          if (prev.length === 0) return sl;
+          const slIds = new Set(sl.map((l: ScoreLog) => l.id));
+          const extra = prev.filter(l => !slIds.has(l.id));
+          return extra.length > 0 ? [...extra, ...sl] : sl;
+        });
         // 다음 접속 시 즉시 표시를 위해 로컬에도 캐시
         saveToLocal('lessons', ls);
         saveToLocal('lessonPlans', lps);
