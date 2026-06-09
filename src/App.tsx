@@ -1047,11 +1047,16 @@ function RecordsPage() {
         const finalClassId = pendingScoreRef.current.classId;
 
         const finalClasses = latestClasses.map(c => {
-          if (c.classId !== finalClassId) return c;
-          return {
+          const base = {
             ...c,
-            classScore: pendingScoreRef.current!.classScore,
-            groupScores: [...pendingScoreRef.current!.groupScores],
+            classScore: c.classScore ?? 0,
+            groupScores: (c.groupScores ?? [0,0,0,0,0]).map(s => (isNaN(s) ? 0 : s)),
+          };
+          if (c.classId !== finalClassId) return base;
+          return {
+            ...base,
+            classScore: Math.round(pendingScoreRef.current!.classScore * 100) / 100,
+            groupScores: pendingScoreRef.current!.groupScores.map(s => Math.round((isNaN(s) ? 0 : s) * 100) / 100),
           };
         });
         const allFreshLogs = latestLogs.filter(l => l.date >= twoWeeksAgo);
@@ -2500,9 +2505,12 @@ export default function App() {
   }, [user]);
 
   const updateFirestoreField = async (field: string, data: any) => {
-    if (!user || !isFirebaseEnabled || !db) return;
+    if (!isFirebaseEnabled || !db) return; // Firebase 비활성 시 조용히 통과
+    if (!user) throw new Error('로그인 필요'); // user 없으면 명시적 에러 → catch에서 처리
     const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'appState', 'shared');
-    await setDoc(docRef, { [field]: data }, { merge: true });
+    // Firestore는 undefined 값을 직렬화하지 못하므로 JSON 왕복으로 제거
+    const sanitized = JSON.parse(JSON.stringify(data));
+    await setDoc(docRef, { [field]: sanitized }, { merge: true });
   };
 
   const contextValue: AppContextType = {
