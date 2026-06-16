@@ -1233,7 +1233,7 @@ function RecordsPage() {
 // ManagePage
 // ==========================================
 function ManagePage() {
-  const { lessons, lessonPlans, classes, holidays, events, tasks, goToPage, updateEvents } = useContext(AppContext)!;
+  const { lessons, lessonPlans, updateLessonPlans, updateLessons, classes, holidays, events, tasks, goToPage, updateEvents } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
   const [selectedClassId, setSelectedClassId] = useState<string>('all');
   
@@ -1249,10 +1249,11 @@ function ManagePage() {
   }, [classes, selectedClassId]);
 
   const [isModifying, setIsModifying] = useState(false);
-  const [modifyType, setModifyType] = useState<'move' | 'cancel' | 'replace'>('move');
+  const [modifyType, setModifyType] = useState<'move' | 'cancel' | 'replace' | 'swap'>('move');
   const [targetDate, setTargetDate] = useState('');
   const [targetPeriod, setTargetPeriod] = useState<number>(1);
   const [replaceTitle, setReplaceTitle] = useState('');
+  const [swapTargetOrder, setSwapTargetOrder] = useState<number | ''>('');
 
   const daysInWeek = Array.from({ length: 5 }, (_, i) => dateUtils.addDays(currentWeekStart, i));
   const weekEndDateStr = dateUtils.formatDate(dateUtils.addDays(currentWeekStart, 4));
@@ -1417,6 +1418,49 @@ function ManagePage() {
     if (!selectedItem) return;
 
     const { date, period, classId } = selectedItem.item;
+
+    // ── 차시 교환 (swap) ──────────────────────────────────────────
+    if (modifyType === 'swap') {
+      if (swapTargetOrder === '') { addToast('교환할 차시 번호를 입력해주세요.'); return; }
+      const currentOrder = selectedItem.item.lesson?.order;
+      if (!currentOrder) { addToast('차시 정보를 찾을 수 없습니다.'); return; }
+      const targetOrderNum = Number(swapTargetOrder);
+      if (targetOrderNum === currentOrder) { addToast('같은 차시와는 교환할 수 없습니다.'); return; }
+
+      // 해당 반에 적용된 수업계획서 찾기
+      const plans = lessonPlans.length > 0 ? lessonPlans : [{ id: 'plan-default', name: '기본 수업계획서', classIds: [] as string[], lessons }];
+      const fallbackPlan = plans[0];
+      const assignedPlan = plans.find(p => (p.classIds || []).includes(classId)) || fallbackPlan;
+      const planLessons = [...(assignedPlan.lessons || [])].sort((a, b) => a.order - b.order);
+
+      const lessonA = planLessons.find(l => l.order === currentOrder);
+      const lessonB = planLessons.find(l => l.order === targetOrderNum);
+      if (!lessonA) { addToast('현재 차시를 찾을 수 없습니다.'); return; }
+      if (!lessonB) { addToast(`${targetOrderNum}차시를 찾을 수 없습니다.`); return; }
+
+      // order 값을 서로 교환
+      const swappedLessons = planLessons.map(l => {
+        if (l.id === lessonA.id) return { ...l, order: lessonB.order };
+        if (l.id === lessonB.id) return { ...l, order: lessonA.order };
+        return l;
+      });
+
+      const nextPlans = plans.map(p =>
+        p.id === assignedPlan.id ? { ...p, lessons: swappedLessons } : p
+      );
+
+      try {
+        await updateLessonPlans(nextPlans);
+        if (nextPlans[0]) await updateLessons(nextPlans[0].lessons);
+        setSelectedItem(null);
+        setIsModifying(false);
+        addToast(`${currentOrder}차시 ↔ ${targetOrderNum}차시 교환이 완료되었습니다.`, 'success');
+      } catch {
+        addToast('차시 교환에 실패했습니다.');
+      }
+      return;
+    }
+
     let filteredEvents = [...events];
 
     if (selectedItem.item.type === 'event' && selectedItem.item.event) {
@@ -1725,6 +1769,9 @@ function ManagePage() {
                       <label className="flex items-center gap-2 text-sm font-bold text-orange-900 dark:text-orange-300 cursor-pointer">
                         <input type="radio" checked={modifyType === 'cancel'} onChange={() => setModifyType('cancel')} className="w-4 h-4 text-orange-600 bg-white border-orange-300 focus:ring-orange-500" /> 단순 결강 (현재시간 빈칸, 진도 밀림)
                       </label>
+                      <label className="flex items-center gap-2 text-sm font-bold text-orange-900 dark:text-orange-300 cursor-pointer">
+                        <input type="radio" checked={modifyType === 'swap'} onChange={() => { setModifyType('swap'); setSwapTargetOrder(''); }} className="w-4 h-4 text-orange-600 bg-white border-orange-300 focus:ring-orange-500" /> 차시 교환 (두 차시의 수업 내용을 서로 바꾸기)
+                      </label>
                     </div>
                     
                     {modifyType === 'replace' && (
@@ -1758,6 +1805,33 @@ function ManagePage() {
 
                     {modifyType === 'cancel' && (
                       <p className="text-[11px] text-orange-600 dark:text-orange-400 font-bold">⚠️ 현재 슬롯이 빈칸이 되고, 해당 차시는 이후 수업으로 밀립니다.</p>
+                    )}
+
+                    {modifyType === 'swap' && (
+                      <div>
+                        <label className="block text-xs font-black text-orange-700 dark:text-orange-400 mb-2">
+                          교환할 차시 번호 입력
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-orange-900 dark:text-orange-300 shrink-0">
+                            {selectedItem.item.lesson?.order}차시 ↔
+                          </span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={swapTargetOrder}
+                            onChange={e => setSwapTargetOrder(e.target.value === '' ? '' : Number(e.target.value))}
+                            onKeyDown={e => e.key === 'Enter' && handleModifySchedule()}
+                            autoFocus
+                            placeholder="예: 20"
+                            className="w-28 border border-orange-300 dark:border-orange-700 p-3 text-sm font-bold rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
+                          />
+                          <span className="text-sm font-bold text-orange-900 dark:text-orange-300 shrink-0">차시</span>
+                        </div>
+                        <p className="text-[11px] text-orange-600 dark:text-orange-400 mt-1.5 font-bold">
+                          ✅ 두 차시의 수업 제목과 메모가 서로 바뀝니다. 날짜/시간은 변경되지 않습니다.
+                        </p>
+                      </div>
                     )}
                     
                     <div className="flex justify-end gap-2 pt-2">
