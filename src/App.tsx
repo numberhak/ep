@@ -39,7 +39,9 @@ const loadFromLocal = (key: string, fallback: any) => {
 // 1. Data Models (TypeScript Interfaces)
 // ==========================================
 export interface Lesson { id: string; order: number; title: string; memo: string; }
-export interface LessonPlan { id: string; name: string; classIds: string[]; lessons: Lesson[]; }
+/** 특정 반에만 적용되는 차시 내용 오버라이드 (order 기준) */
+export interface ClassLessonOverride { classId: string; order: number; title: string; memo: string; }
+export interface LessonPlan { id: string; name: string; classIds: string[]; lessons: Lesson[]; classOverrides?: ClassLessonOverride[]; }
 export interface WeeklySlot { dayOfWeek: number; period: number; }
 export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan';
 export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; classScore?: number; groupScores?: number[]; }
@@ -103,9 +105,23 @@ function generateClassLessonSchedule(
   schedule: ClassSchedule,
   holidays: Holiday[],
   events: ClassEvent[],
-  viewEndDateStr: string
+  viewEndDateStr: string,
+  classOverrides?: ClassLessonOverride[]
 ): ScheduledItem[] {
-  const sortedLessons = [...lessons].sort((a, b) => a.order - b.order);
+  // 이 반에 해당하는 override를 order → {title, memo} 맵으로 변환
+  const overrideMap = new Map<number, { title: string; memo: string }>();
+  if (classOverrides) {
+    classOverrides
+      .filter(o => o.classId === schedule.classId)
+      .forEach(o => overrideMap.set(o.order, { title: o.title, memo: o.memo }));
+  }
+  // override 적용한 복사본으로 sortedLessons 생성
+  const sortedLessons = [...lessons]
+    .sort((a, b) => a.order - b.order)
+    .map(l => {
+      const ov = overrideMap.get(l.order);
+      return ov ? { ...l, title: ov.title, memo: ov.memo } : l;
+    });
   const holidaySet = new Set(holidays.map(h => h.date));
 
   const classEvents = events.filter(e => e.classId === schedule.classId);
@@ -1398,7 +1414,7 @@ function ManagePage() {
     targetClasses.forEach(cls => {
       const assignedPlan = plans.find(plan => (plan.classIds || []).includes(cls.classId)) || fallbackPlan;
       const clsLessons = assignedPlan?.lessons || lessons;
-      const clsSchedule = generateClassLessonSchedule(clsLessons, cls, holidays, events, weekEndDateStr);
+      const clsSchedule = generateClassLessonSchedule(clsLessons, cls, holidays, events, weekEndDateStr, assignedPlan?.classOverrides);
       clsSchedule.forEach(item => allItems.push({ item, classInfo: cls }));
     });
     return allItems;
@@ -1420,6 +1436,7 @@ function ManagePage() {
     const { date, period, classId } = selectedItem.item;
 
     // ── 차시 교환 (swap) ──────────────────────────────────────────
+    // plan.lessons는 건드리지 않고, 이 반(classId)에만 classOverrides를 추가/수정한다.
     if (modifyType === 'swap') {
       if (swapTargetOrder === '') { addToast('교환할 차시 번호를 입력해주세요.'); return; }
       const currentOrder = selectedItem.item.lesson?.order;
@@ -1427,26 +1444,45 @@ function ManagePage() {
       const targetOrderNum = Number(swapTargetOrder);
       if (targetOrderNum === currentOrder) { addToast('같은 차시와는 교환할 수 없습니다.'); return; }
 
-      // 해당 반에 적용된 수업계획서 찾기
       const plans = lessonPlans.length > 0 ? lessonPlans : [{ id: 'plan-default', name: '기본 수업계획서', classIds: [] as string[], lessons }];
       const fallbackPlan = plans[0];
       const assignedPlan = plans.find(p => (p.classIds || []).includes(classId)) || fallbackPlan;
       const planLessons = [...(assignedPlan.lessons || [])].sort((a, b) => a.order - b.order);
 
-      const lessonA = planLessons.find(l => l.order === currentOrder);
-      const lessonB = planLessons.find(l => l.order === targetOrderNum);
-      if (!lessonA) { addToast('현재 차시를 찾을 수 없습니다.'); return; }
-      if (!lessonB) { addToast(`${targetOrderNum}차시를 찾을 수 없습니다.`); return; }
+      if (!planLessons.find(l => l.order === currentOrder)) { addToast('현재 차시를 찾을 수 없습니다.'); return; }
+      if (!planLessons.find(l => l.order === targetOrderNum)) { addToast(`${targetOrderNum}차시를 찾을 수 없습니다.`); return; }
 
-      // order 값을 서로 교환
-      const swappedLessons = planLessons.map(l => {
-        if (l.id === lessonA.id) return { ...l, order: lessonB.order };
-        if (l.id === lessonB.id) return { ...l, order: lessonA.order };
-        return l;
+      // 이미 적용된 override를 포함하여 이 반의 실제 차시 내용을 구한다
+      const existingOverrides: ClassLessonOverride[] = (assignedPlan.classOverrides || []);
+      const overrideMap = new Map<number, { title: string; memo: string }>(
+        existingOverrides.filter(o => o.classId === classId).map(o => [o.order, { title: o.title, memo: o.memo }])
+      );
+      const getEffective = (order: number): { title: string; memo: string } => {
+        if (overrideMap.has(order)) return overrideMap.get(order)!;
+        const base = planLessons.find(l => l.order === order);
+        return base ? { title: base.title, memo: base.memo } : { title: '', memo: '' };
+      };
+
+      const contentA = getEffective(currentOrder);   // currentOrder 슬롯에 현재 내용
+      const contentB = getEffective(targetOrderNum); // targetOrder 슬롯에 현재 내용
+
+      // 다른 반/다른 order의 override는 그대로 유지, 이 반의 두 order만 교환
+      const otherOverrides = existingOverrides.filter(
+        o => !(o.classId === classId && (o.order === currentOrder || o.order === targetOrderNum))
+      );
+      const swapOverrides: ClassLessonOverride[] = [
+        { classId, order: currentOrder, title: contentB.title, memo: contentB.memo },
+        { classId, order: targetOrderNum, title: contentA.title, memo: contentA.memo },
+      ];
+      // base lesson과 동일한 내용이면 override 불필요 → 제거하여 깔끔하게 유지
+      const cleanedSwapOverrides = swapOverrides.filter(o => {
+        const base = planLessons.find(l => l.order === o.order);
+        return !(base && base.title === o.title && base.memo === o.memo);
       });
 
+      const nextOverrides = [...otherOverrides, ...cleanedSwapOverrides];
       const nextPlans = plans.map(p =>
-        p.id === assignedPlan.id ? { ...p, lessons: swappedLessons } : p
+        p.id === assignedPlan.id ? { ...p, classOverrides: nextOverrides } : p
       );
 
       try {
