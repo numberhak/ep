@@ -50,6 +50,7 @@ export interface ClassEvent { id: string; classId: string; date: string; period:
 export interface ClassRecord { id: string; classId: string; date: string; content: string; important?: boolean; }
 export interface UserProfile { name: string; subject: string; }
 export interface Task { id: string; title: string; date?: string; completed: boolean; }
+export interface TaskNote { id: string; content: string; color: ClassColor; createdAt: string; }
 
 export interface ScoreLog { id: string; classId: string; date: string; time: string; type: 'class' | 'group'; groupIndex?: number; amount: number; label: string; }
 
@@ -218,6 +219,7 @@ interface AppContextType {
   events: ClassEvent[];    updateEvents: (data: ClassEvent[]) => Promise<void>;
   records: ClassRecord[];  updateRecords: (data: ClassRecord[]) => Promise<void>;
   tasks: Task[];           updateTasks: (data: Task[]) => Promise<void>;
+  taskNotes: TaskNote[];   updateTaskNotes: (data: TaskNote[]) => Promise<void>;
   profile: UserProfile;    updateProfile: (data: UserProfile) => Promise<void>;
   menuOrder: string[];     updateMenuOrder: (data: string[]) => Promise<void>;
   scoreLogs: ScoreLog[];   updateScoreLogs: (data: ScoreLog[]) => Promise<void>;
@@ -896,12 +898,29 @@ function LessonPlanPage() {
 // ==========================================
 // TasksPage
 // ==========================================
+const NOTE_COLOR_STYLES: Record<ClassColor, { card: string; textarea: string; badge: string; dot: string }> = {
+  blue:   { card: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/60',   textarea: 'bg-blue-50 dark:bg-blue-900/20 text-blue-900 dark:text-blue-100 placeholder-blue-300 dark:placeholder-blue-600',   badge: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300',   dot: 'bg-blue-500' },
+  green:  { card: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800/60', textarea: 'bg-green-50 dark:bg-green-900/20 text-green-900 dark:text-green-100 placeholder-green-300 dark:placeholder-green-600', badge: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300', dot: 'bg-green-500' },
+  purple: { card: 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800/60', textarea: 'bg-purple-50 dark:bg-purple-900/20 text-purple-900 dark:text-purple-100 placeholder-purple-300 dark:placeholder-purple-600', badge: 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300', dot: 'bg-purple-500' },
+  rose:   { card: 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800/60',   textarea: 'bg-rose-50 dark:bg-rose-900/20 text-rose-900 dark:text-rose-100 placeholder-rose-300 dark:placeholder-rose-600',   badge: 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300',   dot: 'bg-rose-500' },
+  amber:  { card: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800/60', textarea: 'bg-amber-50 dark:bg-amber-900/20 text-amber-900 dark:text-amber-100 placeholder-amber-300 dark:placeholder-amber-600', badge: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300', dot: 'bg-amber-500' },
+  cyan:   { card: 'bg-cyan-50 dark:bg-cyan-900/20 border-cyan-200 dark:border-cyan-800/60',   textarea: 'bg-cyan-50 dark:bg-cyan-900/20 text-cyan-900 dark:text-cyan-100 placeholder-cyan-300 dark:placeholder-cyan-600',   badge: 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300',   dot: 'bg-cyan-500' },
+};
+const NOTE_COLOR_LABELS: Record<ClassColor, string> = { blue: '파랑', green: '초록', purple: '보라', rose: '분홍', amber: '노랑', cyan: '하늘' };
+const NOTE_COLORS: ClassColor[] = ['blue', 'green', 'purple', 'rose', 'amber', 'cyan'];
+
 function TasksPage() {
-  const { tasks, updateTasks } = useContext(AppContext)!;
+  const { tasks, updateTasks, taskNotes, updateTaskNotes } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
   const [newTitle, setNewTitle] = useState('');
   const [newDate, setNewDate] = useState(dateUtils.formatDate(new Date()));
   const [hasDeadline, setHasDeadline] = useState(true);
+
+  // 메모 상태
+  const [noteColor, setNoteColor] = useState<ClassColor>('amber');
+  const [noteContent, setNoteContent] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState('');
 
   const sortedTasks = [...tasks].sort((a, b) => {
     if (a.completed !== b.completed) return a.completed ? 1 : -1;
@@ -920,6 +939,25 @@ function TasksPage() {
   const toggleTask = async (id: string) => { try { await updateTasks(tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t)); } catch { addToast('상태 변경에 실패했습니다.'); } };
   const deleteTask = async (id: string) => { try { await updateTasks(tasks.filter(t => t.id !== id)); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
 
+  const handleAddNote = async () => {
+    if (!noteContent.trim()) { addToast('메모 내용을 입력해주세요.'); return; }
+    const newNote: TaskNote = { id: `n-${Date.now()}`, content: noteContent.trim(), color: noteColor, createdAt: dateUtils.formatDate(new Date()) };
+    try { await updateTaskNotes([newNote, ...taskNotes]); setNoteContent(''); addToast('메모를 추가했습니다.', 'success'); } catch { addToast('메모 추가에 실패했습니다.'); }
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    try { await updateTaskNotes(taskNotes.filter(n => n.id !== id)); addToast('메모를 삭제했습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); }
+  };
+
+  const handleStartEdit = (note: TaskNote) => { setEditingNoteId(note.id); setEditingContent(note.content); };
+  const handleSaveEdit = async (id: string) => {
+    if (!editingContent.trim()) { addToast('메모 내용을 입력해주세요.'); return; }
+    try { await updateTaskNotes(taskNotes.map(n => n.id === id ? { ...n, content: editingContent.trim() } : n)); setEditingNoteId(null); addToast('수정되었습니다.', 'success'); } catch { addToast('수정에 실패했습니다.'); }
+  };
+  const handleChangeNoteColor = async (id: string, color: ClassColor) => {
+    try { await updateTaskNotes(taskNotes.map(n => n.id === id ? { ...n, color } : n)); } catch { addToast('색상 변경에 실패했습니다.'); }
+  };
+
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500 bg-slate-50/30 dark:bg-slate-900/50 relative">
       <header className="p-4 md:p-8 shrink-0 flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 z-10 sticky top-0 shadow-sm">
@@ -928,59 +966,159 @@ function TasksPage() {
           <p className="text-gray-500 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">마감일(D-Day)을 설정하면 주간 진도표 화면 상단에 자동으로 표시됩니다.</p>
         </div>
       </header>
-      <div className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col md:flex-row gap-6 items-start">
-        <div className="w-full md:w-1/3 bg-white dark:bg-slate-800 p-5 md:p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 shrink-0 md:sticky md:top-6">
-          <h3 className="font-bold text-lg text-slate-800 dark:text-white mb-5 flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-indigo-500"></span>새 업무 등록</h3>
-          <div className="space-y-5">
-            <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-700 pb-3">
-              <label className="block text-sm font-bold text-gray-600 dark:text-gray-300">마감일 (D-Day) 지정</label>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" checked={hasDeadline} onChange={() => setHasDeadline(!hasDeadline)} className="sr-only peer" />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
-              </label>
+      <div className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col gap-8">
+        {/* 업무 체크리스트 + 입력 */}
+        <div className="flex flex-col md:flex-row gap-6 items-start">
+          <div className="w-full md:w-1/3 bg-white dark:bg-slate-800 p-5 md:p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 shrink-0 md:sticky md:top-6">
+            <h3 className="font-bold text-lg text-slate-800 dark:text-white mb-5 flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-indigo-500"></span>새 업무 등록</h3>
+            <div className="space-y-5">
+              <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-700 pb-3">
+                <label className="block text-sm font-bold text-gray-600 dark:text-gray-300">마감일 (D-Day) 지정</label>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" checked={hasDeadline} onChange={() => setHasDeadline(!hasDeadline)} className="sr-only peer" />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                </label>
+              </div>
+              {hasDeadline && <input type="date" aria-label="업무 마감일" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3.5 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />}
+              <div>
+                <label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">업무 내용</label>
+                <input type="text" aria-label="업무 내용" value={newTitle} onChange={e => setNewTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} className="w-full border border-gray-300 dark:border-slate-600 p-3.5 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="예: 수행평가 문제 출제" />
+              </div>
+              <button onClick={handleAdd} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-base rounded-xl shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-800">추가하기</button>
             </div>
-            {hasDeadline && <input type="date" aria-label="업무 마감일" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3.5 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />}
-            <div>
-              <label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">업무 내용</label>
-              <input type="text" aria-label="업무 내용" value={newTitle} onChange={e => setNewTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} className="w-full border border-gray-300 dark:border-slate-600 p-3.5 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="예: 수행평가 문제 출제" />
-            </div>
-            <button onClick={handleAdd} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-base rounded-xl shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-800">추가하기</button>
+          </div>
+          <div className="w-full md:flex-1 space-y-3 pb-2">
+            {sortedTasks.length > 0 ? sortedTasks.map(task => {
+              const isOverdue = !task.completed && task.date && dateUtils.getDDay(task.date) < 0;
+              const dday = task.date ? dateUtils.getDDay(task.date) : null;
+              const ddayText = dday === null ? '' : dday === 0 ? 'D-Day' : dday > 0 ? `D-${dday}` : `D+${Math.abs(dday)}`;
+              return (
+                <div key={task.id} className={`flex items-center justify-between p-4 md:p-5 rounded-2xl border shadow-sm transition-all group ${task.completed ? 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 opacity-60' : isOverdue ? 'bg-rose-50/50 dark:bg-rose-900/10 border-rose-200 dark:border-rose-800/50' : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700'}`}>
+                  <div className="flex items-center gap-3 md:gap-5 overflow-hidden w-full">
+                    <button aria-label="완료 토글" onClick={() => toggleTask(task.id)} className={`shrink-0 w-10 h-10 md:w-8 md:h-8 rounded-full border-2 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${task.completed ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-gray-300 dark:border-gray-600 text-transparent hover:border-indigo-400 bg-white dark:bg-slate-900'}`}>
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
+                    </button>
+                    <div className="flex flex-col min-w-0 flex-1 gap-1.5">
+                      <span className={`text-base md:text-lg font-bold truncate ${task.completed ? 'line-through text-slate-500 dark:text-slate-400' : 'text-slate-800 dark:text-white'}`}>{task.title}</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {task.date ? (
+                          <>
+                            <span className={`text-xs font-black px-2.5 py-1 rounded-lg ${task.completed ? 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400' : isOverdue ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300'}`}>{task.date}</span>
+                            {!task.completed && <span className={`text-lg md:text-xl font-black tracking-tight ${isOverdue ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>}
+                          </>
+                        ) : (
+                          <span className="text-xs font-bold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700">마감일 없음</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <button aria-label="업무 삭제" onClick={() => deleteTask(task.id)} className="shrink-0 text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 p-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded-lg">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
+                </div>
+              );
+            }) : (
+              <div className="flex flex-col items-center justify-center p-12 bg-white dark:bg-slate-800 rounded-2xl border border-dashed border-gray-300 dark:border-slate-700 text-slate-400 dark:text-slate-500"><IconChecklist /><p className="mt-2 text-sm font-medium">등록된 업무가 없습니다.</p></div>
+            )}
           </div>
         </div>
-        <div className="w-full md:flex-1 space-y-3 pb-10">
-          {sortedTasks.length > 0 ? sortedTasks.map(task => {
-            const isOverdue = !task.completed && task.date && dateUtils.getDDay(task.date) < 0;
-            const dday = task.date ? dateUtils.getDDay(task.date) : null;
-            const ddayText = dday === null ? '' : dday === 0 ? 'D-Day' : dday > 0 ? `D-${dday}` : `D+${Math.abs(dday)}`;
 
-            return (
-              <div key={task.id} className={`flex items-center justify-between p-4 md:p-5 rounded-2xl border shadow-sm transition-all group ${task.completed ? 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 opacity-60' : isOverdue ? 'bg-rose-50/50 dark:bg-rose-900/10 border-rose-200 dark:border-rose-800/50' : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700'}`}>
-                <div className="flex items-center gap-3 md:gap-5 overflow-hidden w-full">
-                  <button aria-label="완료 토글" onClick={() => toggleTask(task.id)} className={`shrink-0 w-10 h-10 md:w-8 md:h-8 rounded-full border-2 flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${task.completed ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-gray-300 dark:border-gray-600 text-transparent hover:border-indigo-400 bg-white dark:bg-slate-900'}`}>
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
-                  </button>
-                  <div className="flex flex-col min-w-0 flex-1 gap-1.5">
-                    <span className={`text-base md:text-lg font-bold truncate ${task.completed ? 'line-through text-slate-500 dark:text-slate-400' : 'text-slate-800 dark:text-white'}`}>{task.title}</span>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {task.date ? (
+        {/* 업무 메모 섹션 */}
+        <div className="border-t border-gray-100 dark:border-slate-700 pt-6">
+          <h2 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+            <svg className="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+            업무 메모
+          </h2>
+          <div className="flex flex-col md:flex-row gap-6 items-start">
+            {/* 메모 입력 */}
+            <div className="w-full md:w-72 shrink-0 bg-white dark:bg-slate-800 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm p-5">
+              <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-3">새 메모 추가</h3>
+              <div className="mb-3">
+                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 block">메모지 색상</label>
+                <div className="flex gap-2 flex-wrap">
+                  {NOTE_COLORS.map(c => (
+                    <button
+                      key={c}
+                      aria-label={NOTE_COLOR_LABELS[c]}
+                      onClick={() => setNoteColor(c)}
+                      className={`w-7 h-7 rounded-full transition-transform ${NOTE_COLOR_STYLES[c].dot} ${noteColor === c ? 'ring-2 ring-offset-2 ring-slate-400 dark:ring-offset-slate-800 scale-110' : 'opacity-60 hover:opacity-90 hover:scale-105'}`}
+                    />
+                  ))}
+                </div>
+              </div>
+              <textarea
+                value={noteContent}
+                onChange={e => setNoteContent(e.target.value)}
+                rows={4}
+                placeholder="메모 내용을 입력하세요..."
+                className={`w-full rounded-xl border-0 p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400 dark:focus:ring-amber-500 ${NOTE_COLOR_STYLES[noteColor].textarea}`}
+              />
+              <button
+                onClick={handleAddNote}
+                className="w-full mt-3 py-2.5 bg-slate-800 dark:bg-slate-700 hover:bg-slate-700 dark:hover:bg-slate-600 text-white font-bold text-sm rounded-xl transition-colors"
+              >
+                메모 추가
+              </button>
+            </div>
+
+            {/* 메모 목록 */}
+            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pb-10">
+              {taskNotes.length === 0 && (
+                <div className="col-span-full flex flex-col items-center justify-center p-10 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700 text-slate-400 dark:text-slate-500">
+                  <svg className="w-8 h-8 mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                  <p className="text-sm font-medium">등록된 메모가 없습니다.</p>
+                </div>
+              )}
+              {taskNotes.map(note => {
+                const styles = NOTE_COLOR_STYLES[note.color];
+                const isEditing = editingNoteId === note.id;
+                return (
+                  <div key={note.id} className={`rounded-2xl border p-4 shadow-sm flex flex-col gap-3 ${styles.card}`}>
+                    {/* 색상 변경 팔레트 */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex gap-1.5">
+                        {NOTE_COLORS.map(c => (
+                          <button
+                            key={c}
+                            aria-label={NOTE_COLOR_LABELS[c]}
+                            onClick={() => handleChangeNoteColor(note.id, c)}
+                            className={`w-4 h-4 rounded-full transition-transform ${NOTE_COLOR_STYLES[c].dot} ${note.color === c ? 'ring-1 ring-offset-1 ring-slate-400 dark:ring-offset-slate-900 scale-110' : 'opacity-50 hover:opacity-80'}`}
+                          />
+                        ))}
+                      </div>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg ${styles.badge}`}>{note.createdAt}</span>
+                    </div>
+
+                    {isEditing ? (
+                      <textarea
+                        value={editingContent}
+                        onChange={e => setEditingContent(e.target.value)}
+                        rows={4}
+                        autoFocus
+                        className={`w-full rounded-xl border-0 p-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400 dark:focus:ring-amber-500 ${styles.textarea}`}
+                      />
+                    ) : (
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap flex-1">{note.content}</p>
+                    )}
+
+                    <div className="flex justify-end gap-2 mt-auto">
+                      {isEditing ? (
                         <>
-                          <span className={`text-xs font-black px-2.5 py-1 rounded-lg ${task.completed ? 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400' : isOverdue ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300'}`}>{task.date}</span>
-                          {!task.completed && <span className={`text-lg md:text-xl font-black tracking-tight ${isOverdue ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>}
+                          <button onClick={() => setEditingNoteId(null)} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-white/60 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 transition-colors">취소</button>
+                          <button onClick={() => handleSaveEdit(note.id)} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-800 dark:bg-slate-600 text-white hover:bg-slate-700 transition-colors">저장</button>
                         </>
                       ) : (
-                        <span className="text-xs font-bold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700">마감일 없음</span>
+                        <>
+                          <button onClick={() => handleStartEdit(note)} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-white/60 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 transition-colors">수정</button>
+                          <button onClick={() => handleDeleteNote(note.id)} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-white/60 dark:bg-slate-800/60 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors">삭제</button>
+                        </>
                       )}
                     </div>
                   </div>
-                </div>
-                <button aria-label="업무 삭제" onClick={() => deleteTask(task.id)} className="shrink-0 text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 p-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded-lg">
-                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                </button>
-              </div>
-            );
-          }) : (
-            <div className="flex flex-col items-center justify-center p-12 bg-white dark:bg-slate-800 rounded-2xl border border-dashed border-gray-300 dark:border-slate-700 text-slate-400 dark:text-slate-500"><IconChecklist /><p className="mt-2 text-sm font-medium">등록된 업무가 없습니다.</p></div>
-          )}
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -2655,6 +2793,7 @@ export default function App() {
   const [eventsState, setEventsState] = useState<ClassEvent[]>(() => loadFromLocal('events', []));
   const [recordsState, setRecordsState] = useState<ClassRecord[]>(() => loadFromLocal('records', []));
   const [tasksState, setTasksState] = useState<Task[]>(() => loadFromLocal('tasks', MOCK_TASKS));
+  const [taskNotesState, setTaskNotesState] = useState<TaskNote[]>(() => loadFromLocal('taskNotes', []));
   const [profileState, setProfileState] = useState<UserProfile>(() => loadFromLocal('profile', DEFAULT_PROFILE));
   const [menuOrderState, setMenuOrderState] = useState<string[]>(() => loadFromLocal('menuOrder', DEFAULT_MENU_ORDER));
   const [scoreLogsState, setScoreLogsState] = useState<ScoreLog[]>(() => loadFromLocal('scoreLogs', []));
@@ -2723,6 +2862,7 @@ export default function App() {
         const es = data.events || [];
         const rs = data.records || [];
         const ts = data.tasks || [];
+        const tn = data.taskNotes || [];
         const ps = data.profile || DEFAULT_PROFILE;
         const ms = data.menuOrder || DEFAULT_MENU_ORDER;
         const sl = (data.scoreLogs || []).filter((log: ScoreLog) => {
@@ -2749,6 +2889,7 @@ export default function App() {
         setEventsState(es);
         setRecordsState(rs);
         setTasksState(ts);
+        setTaskNotesState(tn);
         setProfileState(ps);
         setMenuOrderState(ms);
         // pending 중 낙관적으로 추가된 로그만 보존 (삭제된 로그는 복원 안 함)
@@ -2768,6 +2909,7 @@ export default function App() {
         saveToLocal('events', es);
         saveToLocal('records', rs);
         saveToLocal('tasks', ts);
+        saveToLocal('taskNotes', tn);
         saveToLocal('profile', ps);
         saveToLocal('menuOrder', ms);
         saveToLocal('scoreLogs', sl);
@@ -2798,6 +2940,7 @@ export default function App() {
     events: eventsState, updateEvents: async (data) => { setEventsState(data); saveToLocal('events', data); if (isFirebaseEnabled) await updateFirestoreField('events', data); },
     records: recordsState, updateRecords: async (data) => { setRecordsState(data); saveToLocal('records', data); if (isFirebaseEnabled) await updateFirestoreField('records', data); },
     tasks: tasksState, updateTasks: async (data) => { setTasksState(data); saveToLocal('tasks', data); if (isFirebaseEnabled) await updateFirestoreField('tasks', data); },
+    taskNotes: taskNotesState, updateTaskNotes: async (data) => { setTaskNotesState(data); saveToLocal('taskNotes', data); if (isFirebaseEnabled) await updateFirestoreField('taskNotes', data); },
     profile: profileState, updateProfile: async (data) => { setProfileState(data); saveToLocal('profile', data); if (isFirebaseEnabled) await updateFirestoreField('profile', data); },
     menuOrder: menuOrderState, updateMenuOrder: async (data) => { setMenuOrderState(data); saveToLocal('menuOrder', data); if (isFirebaseEnabled) await updateFirestoreField('menuOrder', data); },
     scoreLogs: scoreLogsState, updateScoreLogs: async (data) => { setScoreLogsState(data); saveToLocal('scoreLogs', data); if (isFirebaseEnabled) await updateFirestoreField('scoreLogs', data); },
