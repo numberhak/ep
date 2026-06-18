@@ -553,26 +553,21 @@ function LessonPlanPage() {
 
   const displayData = (isEditMode ? editData : (activePlan?.lessons || [])).slice().sort((a, b) => a.order - b.order);
 
-  // 각 차시의 order → 학급별 예정 날짜/교시 맵
-  const lessonScheduleMap = useMemo(() => {
-    if (!activePlan) return new Map<number, { className: string; color: ClassColor; date: string; period: number }[]>();
+  // 선택된 학급 탭의 order → 예정 날짜/교시 맵
+  const classScheduleMap = useMemo(() => {
+    if (!activePlan || !selectedClassTab) return new Map<number, { date: string; period: number }>();
+    const cls = classes.find(c => c.classId === selectedClassTab);
+    if (!cls) return new Map<number, { date: string; period: number }>();
     const endDate = dateUtils.formatDate(dateUtils.addDays(new Date(), 365));
-    const planClasses = activePlan.id === fallbackPlans[0]?.id
-      ? classes.filter(c => !(lessonPlans.some(p => p.id !== activePlan.id && (p.classIds || []).includes(c.classId))))
-      : classes.filter(c => (activePlan.classIds || []).includes(c.classId));
-    const map = new Map<number, { className: string; color: ClassColor; date: string; period: number }[]>();
-    planClasses.forEach(cls => {
-      const scheduled = generateClassLessonSchedule(
-        activePlan.lessons, cls, holidays, events, endDate, activePlan.classOverrides
-      );
-      scheduled.filter(s => s.type === 'lesson' && s.lesson).forEach(s => {
-        const order = s.lesson!.order;
-        if (!map.has(order)) map.set(order, []);
-        map.get(order)!.push({ className: cls.className, color: cls.color, date: s.date, period: s.period });
-      });
+    const scheduled = generateClassLessonSchedule(
+      activePlan.lessons, cls, holidays, events, endDate, activePlan.classOverrides
+    );
+    const map = new Map<number, { date: string; period: number }>();
+    scheduled.filter(s => s.type === 'lesson' && s.lesson).forEach(s => {
+      if (!map.has(s.lesson!.order)) map.set(s.lesson!.order, { date: s.date, period: s.period });
     });
     return map;
-  }, [activePlan, classes, holidays, events, lessonPlans, fallbackPlans]);
+  }, [activePlan, selectedClassTab, classes, holidays, events]);
 
   const assignedClasses = activePlan ? classes.filter(c => (activePlan.classIds || []).includes(c.classId)) : [];
   // 기본 계획(첫 번째) 이면 배정 없는 학급도 포함
@@ -723,8 +718,9 @@ function LessonPlanPage() {
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-sm border-b border-slate-100 dark:border-slate-700">
                     <th className="px-6 py-4 font-semibold w-24">차시</th>
-                    <th className="px-6 py-4 font-semibold w-1/3">수업 제목</th>
-                    <th className="px-6 py-4 font-semibold">비고 (교사용 메모)</th>
+                    <th className="px-6 py-4 font-semibold w-36">수업 제목</th>
+                    <th className="px-6 py-4 font-semibold w-36">비고 (메모)</th>
+                    <th className="px-6 py-4 font-semibold w-40">예정 일정</th>
                     <th className="px-6 py-4 font-semibold w-32 text-center">관리</th>
                   </tr>
                 </thead>
@@ -732,6 +728,9 @@ function LessonPlanPage() {
                   {classEditData.map((item, index) => {
                     const baseLesson = activePlan.lessons.find(l => l.order === item.order);
                     const baseSame = baseLesson && item.title === baseLesson.title && item.memo === baseLesson.memo;
+                    const sched = classScheduleMap.get(item.order);
+                    const DAY_KO = ['일','월','화','수','목','금','토'];
+                    const schedLabel = sched ? (() => { const d = dateUtils.parseDate(sched.date); return `${d.getMonth()+1}/${d.getDate()}(${DAY_KO[d.getDay()]}) ${sched.period}교시`; })() : null;
                     return (
                       <tr key={index} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors bg-indigo-50/10 dark:bg-indigo-900/10">
                         <td className="px-6 py-4">
@@ -744,6 +743,11 @@ function LessonPlanPage() {
                         <td className="px-6 py-3">
                           <input type="text" value={item.memo} onChange={e => handleClassEditChange(index, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="교사용 메모 입력" />
                         </td>
+                        <td className="px-6 py-4">
+                          {schedLabel
+                            ? <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded-lg whitespace-nowrap">{schedLabel}</span>
+                            : <span className="text-xs text-slate-300 dark:text-slate-600">—</span>}
+                        </td>
                         <td className="px-6 py-3 text-center">
                           <div className="flex justify-center items-center gap-1">
                             <button aria-label="위로 이동" onClick={() => moveClassLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▲</button>
@@ -755,7 +759,7 @@ function LessonPlanPage() {
                     );
                   })}
                   {classEditData.length === 0 && (
-                    <tr><td colSpan={4} className="px-6 py-12 text-center text-slate-400 font-bold">등록된 차시가 없습니다.</td></tr>
+                    <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-400 font-bold">등록된 차시가 없습니다.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -765,14 +769,18 @@ function LessonPlanPage() {
               {classEditData.map((item, index) => {
                 const baseLesson = activePlan.lessons.find(l => l.order === item.order);
                 const baseSame = baseLesson && item.title === baseLesson.title && item.memo === baseLesson.memo;
+                const sched = classScheduleMap.get(item.order);
+                const DAY_KO = ['일','월','화','수','목','금','토'];
+                const schedLabel = sched ? (() => { const d = dateUtils.parseDate(sched.date); return `${d.getMonth()+1}/${d.getDate()}(${DAY_KO[d.getDay()]}) ${sched.period}교시`; })() : null;
                 return (
                   <div key={index} className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm">
                     <div className="flex justify-between items-start gap-3 mb-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-lg">{index + 1}차시</span>
                         {!baseSame && <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded-md">수정됨</span>}
+                        {schedLabel && <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-lg">{schedLabel}</span>}
                       </div>
-                      <div className="flex gap-1">
+                      <div className="flex gap-1 shrink-0">
                         <button aria-label="위로 이동" onClick={() => moveClassLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 disabled:opacity-30">▲</button>
                         <button aria-label="아래로 이동" onClick={() => moveClassLesson(index, 1)} disabled={index === classEditData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 disabled:opacity-30">▼</button>
                         <button aria-label="차시 삭제" onClick={() => deleteClassLesson(index)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 font-bold">×</button>
@@ -799,14 +807,11 @@ function LessonPlanPage() {
                     <th className="px-6 py-4 font-semibold w-24">차시</th>
                     <th className="px-6 py-4 font-semibold w-1/3">수업 제목</th>
                     <th className="px-6 py-4 font-semibold">비고 (교사용 메모)</th>
-                    {!isEditMode && <th className="px-6 py-4 font-semibold w-52">예정 일정</th>}
                     <th className="px-6 py-4 font-semibold w-32 text-center">관리</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-slate-700/50">
-                  {displayData.map((lesson, index) => {
-                    const scheduleEntries = lessonScheduleMap.get(lesson.order) || [];
-                    return (
+                  {displayData.map((lesson, index) => (
                     <tr key={lesson.id} className={`hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors group ${isEditMode ? 'bg-indigo-50/10 dark:bg-indigo-900/10' : ''}`}>
                       <td className="px-6 py-5 font-black text-indigo-600 dark:text-indigo-400 whitespace-nowrap">{index + 1}차시</td>
                       {isEditMode ? (
@@ -825,26 +830,6 @@ function LessonPlanPage() {
                         <>
                           <td className="px-6 py-5 font-bold text-gray-900 dark:text-gray-100">{lesson.title || '제목 없음'}</td>
                           <td className="px-6 py-5 text-gray-500 dark:text-gray-400 text-sm">{lesson.memo}</td>
-                          <td className="px-6 py-4">
-                            {scheduleEntries.length > 0 ? (
-                              <div className="flex flex-col gap-1">
-                                {scheduleEntries.map((s, i) => {
-                                  const d = dateUtils.parseDate(s.date);
-                                  const DAY_KO = ['일','월','화','수','목','금','토'];
-                                  const label = `${d.getMonth()+1}/${d.getDate()}(${DAY_KO[d.getDay()]}) ${s.period}교시`;
-                                  const colorStyle = COLOR_MAP[s.color];
-                                  return (
-                                    <div key={i} className="flex items-center gap-1.5 flex-wrap">
-                                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${colorStyle.bg} ${colorStyle.text}`}>{s.className}</span>
-                                      <span className="text-[11px] text-slate-500 dark:text-slate-400 font-bold">{label}</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <span className="text-xs text-slate-300 dark:text-slate-600">—</span>
-                            )}
-                          </td>
                           <td className="px-6 py-5 text-center">
                             <div className="flex justify-center items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30">▲</button>
@@ -855,8 +840,7 @@ function LessonPlanPage() {
                         </>
                       )}
                     </tr>
-                    );
-                  })}
+                  ))}
                   {displayData.length === 0 && (
                     <tr><td colSpan={4} className="px-6 py-12 text-center text-slate-400 font-bold">등록된 차시가 없습니다.</td></tr>
                   )}
@@ -865,10 +849,7 @@ function LessonPlanPage() {
             </div>
 
             <div className="md:hidden space-y-3">
-              {displayData.map((lesson, index) => {
-                const scheduleEntries = lessonScheduleMap.get(lesson.order) || [];
-                const DAY_KO = ['일','월','화','수','목','금','토'];
-                return (
+              {displayData.map((lesson, index) => (
                 <div key={lesson.id} className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm">
                   <div className="flex justify-between items-start gap-3 mb-3">
                     <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-lg">{index + 1}차시</span>
@@ -886,27 +867,11 @@ function LessonPlanPage() {
                   ) : (
                     <div>
                       <h3 className="font-bold text-gray-900 dark:text-gray-100 mb-1">{lesson.title || '제목 없음'}</h3>
-                      {lesson.memo && <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed mb-2">{lesson.memo}</p>}
-                      {scheduleEntries.length > 0 && (
-                        <div className="flex flex-col gap-1 mt-2 pt-2 border-t border-slate-100 dark:border-slate-700">
-                          {scheduleEntries.map((s, i) => {
-                            const d = dateUtils.parseDate(s.date);
-                            const label = `${d.getMonth()+1}/${d.getDate()}(${DAY_KO[d.getDay()]}) ${s.period}교시`;
-                            const colorStyle = COLOR_MAP[s.color];
-                            return (
-                              <div key={i} className="flex items-center gap-1.5">
-                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${colorStyle.bg} ${colorStyle.text}`}>{s.className}</span>
-                                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-bold">{label}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                      <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{lesson.memo}</p>
                     </div>
                   )}
                 </div>
-                );
-              })}
+              ))}
               {displayData.length === 0 && (
                 <div className="bg-white dark:bg-slate-800 p-10 rounded-2xl border border-gray-100 dark:border-slate-700 text-center text-slate-400 font-bold">
                   등록된 차시가 없습니다.
