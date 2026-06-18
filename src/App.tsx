@@ -1436,7 +1436,7 @@ function RecordsPage() {
 // ManagePage
 // ==========================================
 function ManagePage() {
-  const { lessons, lessonPlans, updateLessonPlans, updateLessons, classes, holidays, events, tasks, goToPage, updateEvents } = useContext(AppContext)!;
+  const { lessons, lessonPlans, classes, holidays, events, tasks, goToPage, updateEvents } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
   const [selectedClassId, setSelectedClassId] = useState<string>('all');
   
