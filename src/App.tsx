@@ -296,6 +296,10 @@ function LessonPlanPage() {
   const [editClassIds, setEditClassIds] = useState<string[]>([]);
   const [planToDelete, setPlanToDelete] = useState<LessonPlan | null>(null);
 
+  // 학급별 탭: null = 기본 계획, classId = 해당 학급 override 편집
+  const [selectedClassTab, setSelectedClassTab] = useState<string | null>(null);
+  const [classEditData, setClassEditData] = useState<{ title: string; memo: string }[]>([]);
+
   const activePlan = fallbackPlans.find(p => p.id === selectedPlanId) || fallbackPlans[0];
 
   useEffect(() => {
@@ -309,7 +313,21 @@ function LessonPlanPage() {
     setEditData([...(activePlan.lessons || [])].sort((a, b) => a.order - b.order));
     setEditPlanName(activePlan.name);
     setEditClassIds([...(activePlan.classIds || [])]);
-  }, [activePlan]);
+    setSelectedClassTab(null);
+    setIsEditMode(false);
+  }, [activePlan?.id]);
+
+  // 학급 탭 선택 시 override 데이터 로드 (기본 계획 내용 기준으로 복제)
+  const handleSelectClassTab = (classId: string | null) => {
+    setIsEditMode(false);
+    setSelectedClassTab(classId);
+    if (classId && activePlan) {
+      const baseLessons = [...activePlan.lessons].sort((a, b) => a.order - b.order);
+      const existingOverrides = (activePlan.classOverrides || []).filter(o => o.classId === classId);
+      const overrideMap = new Map(existingOverrides.map(o => [o.order, { title: o.title, memo: o.memo }]));
+      setClassEditData(baseLessons.map(l => overrideMap.get(l.order) ?? { title: l.title, memo: l.memo }));
+    }
+  };
 
   const getAssignedClassNames = (plan: LessonPlan) => {
     const ids = plan.classIds || [];
@@ -338,6 +356,7 @@ function LessonPlanPage() {
   const handleSelectPlan = (planId: string) => {
     setIsEditMode(false);
     setSelectedPlanId(planId);
+    setSelectedClassTab(null);
   };
 
   const handleAddPlan = async () => {
@@ -353,6 +372,7 @@ function LessonPlanPage() {
       setEditPlanName(newPlan.name);
       setEditClassIds([]);
       setEditData(newPlan.lessons);
+      setSelectedClassTab(null);
       setIsEditMode(true);
       addToast('새 수업계획서를 추가했습니다.', 'success');
     } catch {
@@ -368,6 +388,7 @@ function LessonPlanPage() {
       setSelectedPlanId(nextPlans[0]?.id || '');
       setIsEditMode(false);
       setPlanToDelete(null);
+      setSelectedClassTab(null);
       addToast('수업계획서를 삭제했습니다.', 'success');
     } catch {
       addToast('수업계획서 삭제에 실패했습니다.');
@@ -379,9 +400,14 @@ function LessonPlanPage() {
     if (!editPlanName.trim()) { addToast('수업계획서 이름을 입력해주세요.'); return; }
     const normalizedLessons = editData.map((l, i) => ({ ...l, order: i + 1 }));
     const selectedClassSet = new Set(editClassIds);
+    // 학급이 계획서에서 제거될 경우 해당 학급 override도 삭제
+    const removedClassIds = (activePlan.classIds || []).filter(id => !editClassIds.includes(id));
     const nextPlans = fallbackPlans.map(plan => {
       if (plan.id === activePlan.id) {
-        return { ...plan, name: editPlanName.trim(), classIds: editClassIds, lessons: normalizedLessons };
+        const cleanedOverrides = (plan.classOverrides || []).filter(
+          o => !removedClassIds.includes(o.classId)
+        );
+        return { ...plan, name: editPlanName.trim(), classIds: editClassIds, lessons: normalizedLessons, classOverrides: cleanedOverrides };
       }
       return { ...plan, classIds: (plan.classIds || []).filter(id => !selectedClassSet.has(id)) };
     });
@@ -414,10 +440,14 @@ function LessonPlanPage() {
     const base = isEditMode ? editData : (activePlan?.lessons || []);
     const newOrder = base.length > 0 ? Math.max(...base.map(l => l.order)) + 1 : 1;
     const newLesson: Lesson = { id: `l-${Date.now()}`, order: newOrder, title: '', memo: '' };
-    setEditData([...base, newLesson]);
-    if (activePlan) setEditPlanName(activePlan.name);
-    if (activePlan) setEditClassIds([...(activePlan.classIds || [])]);
-    setIsEditMode(true);
+    if (selectedClassTab) {
+      setClassEditData([...classEditData, { title: '', memo: '' }]);
+    } else {
+      setEditData([...base, newLesson]);
+      if (activePlan) setEditPlanName(activePlan.name);
+      if (activePlan) setEditClassIds([...(activePlan.classIds || [])]);
+      setIsEditMode(true);
+    }
   };
 
   const deleteLesson = async (id: string) => {
@@ -450,11 +480,68 @@ function LessonPlanPage() {
     setEditData(editData.map(l => l.id === id ? { ...l, [field]: value } : l));
   };
 
+  const handleClassEditChange = (index: number, field: 'title' | 'memo', value: string) => {
+    setClassEditData(prev => prev.map((item, i) => i === index ? { ...item, [field]: value } : item));
+  };
+
   const toggleClassAssignment = (classId: string) => {
     setEditClassIds(prev => prev.includes(classId) ? prev.filter(id => id !== classId) : [...prev, classId]);
   };
 
+  const handleSaveClassOverrides = async () => {
+    if (!activePlan || !selectedClassTab) return;
+    const baseLessons = [...activePlan.lessons].sort((a, b) => a.order - b.order);
+    const otherOverrides = (activePlan.classOverrides || []).filter(o => o.classId !== selectedClassTab);
+    const newOverrides: ClassLessonOverride[] = classEditData
+      .map((item, i) => ({
+        classId: selectedClassTab,
+        order: baseLessons[i]?.order ?? i + 1,
+        title: item.title,
+        memo: item.memo,
+      }))
+      .filter((o, i) => {
+        // 기본 내용과 같으면 override 불필요
+        const base = baseLessons[i];
+        return !(base && base.title === o.title && base.memo === o.memo);
+      });
+    const nextPlans = fallbackPlans.map(p =>
+      p.id === activePlan.id ? { ...p, classOverrides: [...otherOverrides, ...newOverrides] } : p
+    );
+    try {
+      await persistPlans(nextPlans);
+      addToast('학급별 수업 계획을 저장했습니다.', 'success');
+    } catch {
+      addToast('저장에 실패했습니다.');
+    }
+  };
+
+  const handleResetClassOverrides = async () => {
+    if (!activePlan || !selectedClassTab) return;
+    const nextOverrides = (activePlan.classOverrides || []).filter(o => o.classId !== selectedClassTab);
+    const nextPlans = fallbackPlans.map(p =>
+      p.id === activePlan.id ? { ...p, classOverrides: nextOverrides } : p
+    );
+    try {
+      await persistPlans(nextPlans);
+      // 화면 데이터도 기본 계획으로 리셋
+      const baseLessons = [...activePlan.lessons].sort((a, b) => a.order - b.order);
+      setClassEditData(baseLessons.map(l => ({ title: l.title, memo: l.memo })));
+      addToast('기본 계획으로 초기화했습니다.', 'success');
+    } catch {
+      addToast('초기화에 실패했습니다.');
+    }
+  };
+
   const displayData = (isEditMode ? editData : (activePlan?.lessons || [])).slice().sort((a, b) => a.order - b.order);
+  const assignedClasses = activePlan ? classes.filter(c => (activePlan.classIds || []).includes(c.classId)) : [];
+  // 기본 계획(첫 번째) 이면 배정 없는 학급도 포함
+  const tabClasses = activePlan && activePlan.id === fallbackPlans[0]?.id
+    ? classes.filter(c => !(lessonPlans.some(p => p.id !== activePlan.id && (p.classIds || []).includes(c.classId))))
+    : assignedClasses;
+
+  const activeClassInfo = selectedClassTab ? classes.find(c => c.classId === selectedClassTab) : null;
+  const classHasOverride = (classId: string) =>
+    (activePlan?.classOverrides || []).some(o => o.classId === classId);
 
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500 bg-slate-50/30 dark:bg-slate-900/50 relative">
@@ -462,19 +549,23 @@ function LessonPlanPage() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">수업 계획서</h1>
-            <p className="text-gray-500 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">수업계획서를 여러 개 만들고, 학급별로 서로 다른 계획을 적용합니다.</p>
+            <p className="text-gray-500 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">수업계획서를 여러 개 만들고, 학급별로 수업 내용을 다르게 조정할 수 있습니다.</p>
           </div>
           <div className="flex gap-2 w-full md:w-auto">
-            {isEditMode ? (
-              <>
-                <button onClick={handleCancelEdit} className="flex-1 md:flex-none bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200 px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-gray-200 transition-colors">취소</button>
-                <button onClick={handleSaveAll} className="flex-1 md:flex-none bg-indigo-600 dark:bg-indigo-500 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-sm transition-colors">일괄 저장</button>
-              </>
-            ) : (
-              <button onClick={startEditCurrentPlan} className="flex-1 md:flex-none bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-200 px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm">계획서 수정</button>
+            {!selectedClassTab && (
+              isEditMode ? (
+                <>
+                  <button onClick={handleCancelEdit} className="flex-1 md:flex-none bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200 px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-gray-200 transition-colors">취소</button>
+                  <button onClick={handleSaveAll} className="flex-1 md:flex-none bg-indigo-600 dark:bg-indigo-500 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-sm transition-colors">일괄 저장</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={startEditCurrentPlan} className="flex-1 md:flex-none bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-200 px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm">계획서 수정</button>
+                  <button onClick={handleAdd} className="flex-1 md:flex-none bg-slate-800 dark:bg-indigo-600 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-slate-700 shadow-sm transition-colors">+ 차시 추가</button>
+                  <button onClick={handleAddPlan} className="flex-1 md:flex-none bg-violet-600 dark:bg-violet-500 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-violet-700 shadow-sm transition-colors">+ 계획서 추가</button>
+                </>
+              )
             )}
-            <button onClick={handleAdd} className="flex-1 md:flex-none bg-slate-800 dark:bg-indigo-600 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-slate-700 shadow-sm transition-colors">+ 차시 추가</button>
-            <button onClick={handleAddPlan} className="flex-1 md:flex-none bg-violet-600 dark:bg-violet-500 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-violet-700 shadow-sm transition-colors">+ 계획서 추가</button>
           </div>
         </div>
 
@@ -543,84 +634,180 @@ function LessonPlanPage() {
           </section>
         )}
 
-        <div className="hidden md:block bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[600px]">
-            <thead>
-              <tr className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-sm border-b border-slate-100 dark:border-slate-700">
-                <th className="px-6 py-4 font-semibold w-24">차시</th>
-                <th className="px-6 py-4 font-semibold w-1/3">수업 제목</th>
-                <th className="px-6 py-4 font-semibold">비고 (교사용 메모)</th>
-                <th className="px-6 py-4 font-semibold w-32 text-center">관리</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-slate-700/50">
-              {displayData.map((lesson, index) => (
-                <tr key={lesson.id} className={`hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors group ${isEditMode ? 'bg-indigo-50/10 dark:bg-indigo-900/10' : ''}`}>
-                  <td className="px-6 py-5 font-black text-indigo-600 dark:text-indigo-400 whitespace-nowrap">{index + 1}차시</td>
-                  {isEditMode ? (
-                    <>
-                      <td className="px-6 py-3"><input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" /></td>
-                      <td className="px-6 py-3"><input type="text" value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="교사용 메모 입력" /></td>
-                      <td className="px-6 py-3 text-center">
-                        <div className="flex justify-center items-center gap-1">
-                          <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▲</button>
-                          <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▼</button>
-                          <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors font-bold">×</button>
-                        </div>
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td className="px-6 py-5 font-bold text-gray-900 dark:text-gray-100">{lesson.title || '제목 없음'}</td>
-                      <td className="px-6 py-5 text-gray-500 dark:text-gray-400 text-sm">{lesson.memo}</td>
-                      <td className="px-6 py-5 text-center">
-                        <div className="flex justify-center items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30">▲</button>
-                          <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30">▼</button>
-                          <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md font-bold">×</button>
-                        </div>
-                      </td>
-                    </>
+        {/* 학급별 탭 */}
+        {!isEditMode && tabClasses.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+            <button
+              onClick={() => handleSelectClassTab(null)}
+              className={`shrink-0 px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${selectedClassTab === null ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+            >
+              기본 계획
+            </button>
+            {tabClasses.map(cls => {
+              const isActive = selectedClassTab === cls.classId;
+              const hasOverride = classHasOverride(cls.classId);
+              return (
+                <button
+                  key={cls.classId}
+                  onClick={() => handleSelectClassTab(cls.classId)}
+                  className={`shrink-0 px-4 py-2 rounded-xl text-sm font-bold border transition-colors flex items-center gap-1.5 ${isActive ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+                >
+                  {cls.className}
+                  {hasOverride && <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-indigo-200' : 'bg-indigo-400 dark:bg-indigo-500'}`} />}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 학급별 수업 계획 편집 */}
+        {selectedClassTab && activePlan ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/50 rounded-2xl px-4 py-3">
+              <div>
+                <p className="text-sm font-black text-indigo-800 dark:text-indigo-200">{activeClassInfo?.className} 전용 수업 계획</p>
+                <p className="text-xs text-indigo-500 dark:text-indigo-400 mt-0.5">기본 계획에서 복제된 내용입니다. 이 학급에만 적용되는 수업 제목과 메모를 수정하세요.</p>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={handleResetClassOverrides} className="px-3 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 transition-colors">기본으로 초기화</button>
+                <button onClick={handleSaveClassOverrides} className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm transition-colors">저장</button>
+              </div>
+            </div>
+
+            <div className="hidden md:block bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[600px]">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-sm border-b border-slate-100 dark:border-slate-700">
+                    <th className="px-6 py-4 font-semibold w-24">차시</th>
+                    <th className="px-6 py-4 font-semibold w-1/3">수업 제목</th>
+                    <th className="px-6 py-4 font-semibold">비고 (교사용 메모)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-slate-700/50">
+                  {[...activePlan.lessons].sort((a, b) => a.order - b.order).map((lesson, index) => {
+                    const baseSame = classEditData[index]?.title === lesson.title && classEditData[index]?.memo === lesson.memo;
+                    return (
+                      <tr key={lesson.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors">
+                        <td className="px-6 py-4">
+                          <span className="font-black text-indigo-600 dark:text-indigo-400 whitespace-nowrap">{index + 1}차시</span>
+                          {!baseSame && <span className="ml-2 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded-md">수정됨</span>}
+                        </td>
+                        <td className="px-6 py-3">
+                          <input type="text" value={classEditData[index]?.title ?? lesson.title} onChange={e => handleClassEditChange(index, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" />
+                        </td>
+                        <td className="px-6 py-3">
+                          <input type="text" value={classEditData[index]?.memo ?? lesson.memo} onChange={e => handleClassEditChange(index, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="교사용 메모 입력" />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {activePlan.lessons.length === 0 && (
+                    <tr><td colSpan={3} className="px-6 py-12 text-center text-slate-400 font-bold">등록된 차시가 없습니다.</td></tr>
                   )}
-                </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="md:hidden space-y-3">
+              {[...activePlan.lessons].sort((a, b) => a.order - b.order).map((lesson, index) => {
+                const baseSame = classEditData[index]?.title === lesson.title && classEditData[index]?.memo === lesson.memo;
+                return (
+                  <div key={lesson.id} className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-lg">{index + 1}차시</span>
+                      {!baseSame && <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded-md">수정됨</span>}
+                    </div>
+                    <div className="space-y-2">
+                      <input type="text" value={classEditData[index]?.title ?? lesson.title} onChange={e => handleClassEditChange(index, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="수업 제목 입력" />
+                      <input type="text" value={classEditData[index]?.memo ?? lesson.memo} onChange={e => handleClassEditChange(index, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="교사용 메모 입력" />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="hidden md:block bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[600px]">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-sm border-b border-slate-100 dark:border-slate-700">
+                    <th className="px-6 py-4 font-semibold w-24">차시</th>
+                    <th className="px-6 py-4 font-semibold w-1/3">수업 제목</th>
+                    <th className="px-6 py-4 font-semibold">비고 (교사용 메모)</th>
+                    <th className="px-6 py-4 font-semibold w-32 text-center">관리</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-slate-700/50">
+                  {displayData.map((lesson, index) => (
+                    <tr key={lesson.id} className={`hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors group ${isEditMode ? 'bg-indigo-50/10 dark:bg-indigo-900/10' : ''}`}>
+                      <td className="px-6 py-5 font-black text-indigo-600 dark:text-indigo-400 whitespace-nowrap">{index + 1}차시</td>
+                      {isEditMode ? (
+                        <>
+                          <td className="px-6 py-3"><input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" /></td>
+                          <td className="px-6 py-3"><input type="text" value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="교사용 메모 입력" /></td>
+                          <td className="px-6 py-3 text-center">
+                            <div className="flex justify-center items-center gap-1">
+                              <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▲</button>
+                              <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▼</button>
+                              <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors font-bold">×</button>
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="px-6 py-5 font-bold text-gray-900 dark:text-gray-100">{lesson.title || '제목 없음'}</td>
+                          <td className="px-6 py-5 text-gray-500 dark:text-gray-400 text-sm">{lesson.memo}</td>
+                          <td className="px-6 py-5 text-center">
+                            <div className="flex justify-center items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30">▲</button>
+                              <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30">▼</button>
+                              <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md font-bold">×</button>
+                            </div>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                  {displayData.length === 0 && (
+                    <tr><td colSpan={4} className="px-6 py-12 text-center text-slate-400 font-bold">등록된 차시가 없습니다.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="md:hidden space-y-3">
+              {displayData.map((lesson, index) => (
+                <div key={lesson.id} className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm">
+                  <div className="flex justify-between items-start gap-3 mb-3">
+                    <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-lg">{index + 1}차시</span>
+                    <div className="flex gap-1">
+                      <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 disabled:opacity-30">▲</button>
+                      <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 disabled:opacity-30">▼</button>
+                      <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 font-bold">×</button>
+                    </div>
+                  </div>
+                  {isEditMode ? (
+                    <div className="space-y-2">
+                      <input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="수업 제목 입력" />
+                      <input type="text" value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="교사용 메모 입력" />
+                    </div>
+                  ) : (
+                    <div>
+                      <h3 className="font-bold text-gray-900 dark:text-gray-100 mb-1">{lesson.title || '제목 없음'}</h3>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{lesson.memo}</p>
+                    </div>
+                  )}
+                </div>
               ))}
               {displayData.length === 0 && (
-                <tr><td colSpan={4} className="px-6 py-12 text-center text-slate-400 font-bold">등록된 차시가 없습니다.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="md:hidden space-y-3">
-          {displayData.map((lesson, index) => (
-            <div key={lesson.id} className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm">
-              <div className="flex justify-between items-start gap-3 mb-3">
-                <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-lg">{index + 1}차시</span>
-                <div className="flex gap-1">
-                  <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 disabled:opacity-30">▲</button>
-                  <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 disabled:opacity-30">▼</button>
-                  <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 font-bold">×</button>
-                </div>
-              </div>
-              {isEditMode ? (
-                <div className="space-y-2">
-                  <input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="수업 제목 입력" />
-                  <input type="text" value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="교사용 메모 입력" />
-                </div>
-              ) : (
-                <div>
-                  <h3 className="font-bold text-gray-900 dark:text-gray-100 mb-1">{lesson.title || '제목 없음'}</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{lesson.memo}</p>
+                <div className="bg-white dark:bg-slate-800 p-10 rounded-2xl border border-gray-100 dark:border-slate-700 text-center text-slate-400 font-bold">
+                  등록된 차시가 없습니다.
                 </div>
               )}
             </div>
-          ))}
-          {displayData.length === 0 && (
-            <div className="bg-white dark:bg-slate-800 p-10 rounded-2xl border border-gray-100 dark:border-slate-700 text-center text-slate-400 font-bold">
-              등록된 차시가 없습니다.
-            </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
 
       {planToDelete && (
@@ -1265,11 +1452,10 @@ function ManagePage() {
   }, [classes, selectedClassId]);
 
   const [isModifying, setIsModifying] = useState(false);
-  const [modifyType, setModifyType] = useState<'move' | 'cancel' | 'replace' | 'swap'>('move');
+  const [modifyType, setModifyType] = useState<'move' | 'cancel' | 'replace'>('move');
   const [targetDate, setTargetDate] = useState('');
   const [targetPeriod, setTargetPeriod] = useState<number>(1);
   const [replaceTitle, setReplaceTitle] = useState('');
-  const [swapTargetOrder, setSwapTargetOrder] = useState<number | ''>('');
 
   const daysInWeek = Array.from({ length: 5 }, (_, i) => dateUtils.addDays(currentWeekStart, i));
   const weekEndDateStr = dateUtils.formatDate(dateUtils.addDays(currentWeekStart, 4));
@@ -1434,68 +1620,6 @@ function ManagePage() {
     if (!selectedItem) return;
 
     const { date, period, classId } = selectedItem.item;
-
-    // ── 차시 교환 (swap) ──────────────────────────────────────────
-    // plan.lessons는 건드리지 않고, 이 반(classId)에만 classOverrides를 추가/수정한다.
-    if (modifyType === 'swap') {
-      if (swapTargetOrder === '') { addToast('교환할 차시 번호를 입력해주세요.'); return; }
-      const currentOrder = selectedItem.item.lesson?.order;
-      if (!currentOrder) { addToast('차시 정보를 찾을 수 없습니다.'); return; }
-      const targetOrderNum = Number(swapTargetOrder);
-      if (targetOrderNum === currentOrder) { addToast('같은 차시와는 교환할 수 없습니다.'); return; }
-
-      const plans = lessonPlans.length > 0 ? lessonPlans : [{ id: 'plan-default', name: '기본 수업계획서', classIds: [] as string[], lessons }];
-      const fallbackPlan = plans[0];
-      const assignedPlan = plans.find(p => (p.classIds || []).includes(classId)) || fallbackPlan;
-      const planLessons = [...(assignedPlan.lessons || [])].sort((a, b) => a.order - b.order);
-
-      if (!planLessons.find(l => l.order === currentOrder)) { addToast('현재 차시를 찾을 수 없습니다.'); return; }
-      if (!planLessons.find(l => l.order === targetOrderNum)) { addToast(`${targetOrderNum}차시를 찾을 수 없습니다.`); return; }
-
-      // 이미 적용된 override를 포함하여 이 반의 실제 차시 내용을 구한다
-      const existingOverrides: ClassLessonOverride[] = (assignedPlan.classOverrides || []);
-      const overrideMap = new Map<number, { title: string; memo: string }>(
-        existingOverrides.filter(o => o.classId === classId).map(o => [o.order, { title: o.title, memo: o.memo }])
-      );
-      const getEffective = (order: number): { title: string; memo: string } => {
-        if (overrideMap.has(order)) return overrideMap.get(order)!;
-        const base = planLessons.find(l => l.order === order);
-        return base ? { title: base.title, memo: base.memo } : { title: '', memo: '' };
-      };
-
-      const contentA = getEffective(currentOrder);   // currentOrder 슬롯에 현재 내용
-      const contentB = getEffective(targetOrderNum); // targetOrder 슬롯에 현재 내용
-
-      // 다른 반/다른 order의 override는 그대로 유지, 이 반의 두 order만 교환
-      const otherOverrides = existingOverrides.filter(
-        o => !(o.classId === classId && (o.order === currentOrder || o.order === targetOrderNum))
-      );
-      const swapOverrides: ClassLessonOverride[] = [
-        { classId, order: currentOrder, title: contentB.title, memo: contentB.memo },
-        { classId, order: targetOrderNum, title: contentA.title, memo: contentA.memo },
-      ];
-      // base lesson과 동일한 내용이면 override 불필요 → 제거하여 깔끔하게 유지
-      const cleanedSwapOverrides = swapOverrides.filter(o => {
-        const base = planLessons.find(l => l.order === o.order);
-        return !(base && base.title === o.title && base.memo === o.memo);
-      });
-
-      const nextOverrides = [...otherOverrides, ...cleanedSwapOverrides];
-      const nextPlans = plans.map(p =>
-        p.id === assignedPlan.id ? { ...p, classOverrides: nextOverrides } : p
-      );
-
-      try {
-        await updateLessonPlans(nextPlans);
-        if (nextPlans[0]) await updateLessons(nextPlans[0].lessons);
-        setSelectedItem(null);
-        setIsModifying(false);
-        addToast(`${currentOrder}차시 ↔ ${targetOrderNum}차시 교환이 완료되었습니다.`, 'success');
-      } catch {
-        addToast('차시 교환에 실패했습니다.');
-      }
-      return;
-    }
 
     let filteredEvents = [...events];
 
@@ -1805,9 +1929,6 @@ function ManagePage() {
                       <label className="flex items-center gap-2 text-sm font-bold text-orange-900 dark:text-orange-300 cursor-pointer">
                         <input type="radio" checked={modifyType === 'cancel'} onChange={() => setModifyType('cancel')} className="w-4 h-4 text-orange-600 bg-white border-orange-300 focus:ring-orange-500" /> 단순 결강 (현재시간 빈칸, 진도 밀림)
                       </label>
-                      <label className="flex items-center gap-2 text-sm font-bold text-orange-900 dark:text-orange-300 cursor-pointer">
-                        <input type="radio" checked={modifyType === 'swap'} onChange={() => { setModifyType('swap'); setSwapTargetOrder(''); }} className="w-4 h-4 text-orange-600 bg-white border-orange-300 focus:ring-orange-500" /> 차시 교환 (두 차시의 수업 내용을 서로 바꾸기)
-                      </label>
                     </div>
                     
                     {modifyType === 'replace' && (
@@ -1843,33 +1964,6 @@ function ManagePage() {
                       <p className="text-[11px] text-orange-600 dark:text-orange-400 font-bold">⚠️ 현재 슬롯이 빈칸이 되고, 해당 차시는 이후 수업으로 밀립니다.</p>
                     )}
 
-                    {modifyType === 'swap' && (
-                      <div>
-                        <label className="block text-xs font-black text-orange-700 dark:text-orange-400 mb-2">
-                          교환할 차시 번호 입력
-                        </label>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-orange-900 dark:text-orange-300 shrink-0">
-                            {selectedItem.item.lesson?.order}차시 ↔
-                          </span>
-                          <input
-                            type="number"
-                            min={1}
-                            value={swapTargetOrder}
-                            onChange={e => setSwapTargetOrder(e.target.value === '' ? '' : Number(e.target.value))}
-                            onKeyDown={e => e.key === 'Enter' && handleModifySchedule()}
-                            autoFocus
-                            placeholder="예: 20"
-                            className="w-28 border border-orange-300 dark:border-orange-700 p-3 text-sm font-bold rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
-                          />
-                          <span className="text-sm font-bold text-orange-900 dark:text-orange-300 shrink-0">차시</span>
-                        </div>
-                        <p className="text-[11px] text-orange-600 dark:text-orange-400 mt-1.5 font-bold">
-                          ✅ 두 차시의 수업 제목과 메모가 서로 바뀝니다. 날짜/시간은 변경되지 않습니다.
-                        </p>
-                      </div>
-                    )}
-                    
                     <div className="flex justify-end gap-2 pt-2">
                       <button onClick={() => setIsModifying(false)} className="px-5 py-2.5 bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-200 text-sm font-bold rounded-xl hover:bg-gray-50 transition-colors shadow-sm">취소</button>
                       <button onClick={handleModifySchedule} className="px-5 py-2.5 bg-orange-600 dark:bg-orange-500 hover:bg-orange-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm">변경 적용</button>
