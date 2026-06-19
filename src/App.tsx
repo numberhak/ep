@@ -39,9 +39,8 @@ const loadFromLocal = (key: string, fallback: any) => {
 // 1. Data Models (TypeScript Interfaces)
 // ==========================================
 export interface Lesson { id: string; order: number; title: string; memo: string; }
-/** 특정 반에만 적용되는 차시 내용 오버라이드 (order 기준) */
-export interface ClassLessonOverride { classId: string; order: number; title: string; memo: string; }
-export interface LessonPlan { id: string; name: string; classIds: string[]; lessons: Lesson[]; classOverrides?: ClassLessonOverride[]; }
+export interface ClassLessonPlan { classId: string; lessons: Lesson[]; }
+export interface LessonPlan { id: string; name: string; classIds: string[]; lessons: Lesson[]; classLessonPlans?: ClassLessonPlan[]; }
 export interface WeeklySlot { dayOfWeek: number; period: number; }
 export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan';
 export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; classScore?: number; groupScores?: number[]; }
@@ -106,23 +105,9 @@ function generateClassLessonSchedule(
   schedule: ClassSchedule,
   holidays: Holiday[],
   events: ClassEvent[],
-  viewEndDateStr: string,
-  classOverrides?: ClassLessonOverride[]
+  viewEndDateStr: string
 ): ScheduledItem[] {
-  // 이 반에 해당하는 override를 order → {title, memo} 맵으로 변환
-  const overrideMap = new Map<number, { title: string; memo: string }>();
-  if (classOverrides) {
-    classOverrides
-      .filter(o => o.classId === schedule.classId)
-      .forEach(o => overrideMap.set(o.order, { title: o.title, memo: o.memo }));
-  }
-  // override 적용한 복사본으로 sortedLessons 생성
-  const sortedLessons = [...lessons]
-    .sort((a, b) => a.order - b.order)
-    .map(l => {
-      const ov = overrideMap.get(l.order);
-      return ov ? { ...l, title: ov.title, memo: ov.memo } : l;
-    });
+  const sortedLessons = [...lessons].sort((a, b) => a.order - b.order);
   const holidaySet = new Set(holidays.map(h => h.date));
 
   const classEvents = events.filter(e => e.classId === schedule.classId);
@@ -324,19 +309,10 @@ function LessonPlanPage() {
     setIsEditMode(false);
     setSelectedClassTab(classId);
     if (classId && activePlan) {
+      const existing = (activePlan.classLessonPlans || []).find(clp => clp.classId === classId);
       const baseLessons = [...activePlan.lessons].sort((a, b) => a.order - b.order);
-      const existingOverrides = (activePlan.classOverrides || []).filter(o => o.classId === classId);
-      const overrideMap = new Map(existingOverrides.map(o => [o.order, { title: o.title, memo: o.memo }]));
-      // order가 있는 override는 반영, 없는 order는 기본 내용으로 채움
-      const merged = baseLessons.map(l => {
-        const ov = overrideMap.get(l.order);
-        return { order: l.order, title: ov ? ov.title : l.title, memo: ov ? ov.memo : l.memo };
-      });
-      // 기본 계획에 없는 추가 override (학급 전용 추가 차시)
-      existingOverrides.filter(o => !baseLessons.find(l => l.order === o.order))
-        .forEach(o => merged.push({ order: o.order, title: o.title, memo: o.memo }));
-      merged.sort((a, b) => a.order - b.order);
-      setClassEditData(merged);
+      const source = existing ? [...existing.lessons].sort((a, b) => a.order - b.order) : baseLessons;
+      setClassEditData(source.map(l => ({ order: l.order, title: l.title, memo: l.memo })));
     }
   };
 
@@ -415,10 +391,10 @@ function LessonPlanPage() {
     const removedClassIds = (activePlan.classIds || []).filter(id => !editClassIds.includes(id));
     const nextPlans = fallbackPlans.map(plan => {
       if (plan.id === activePlan.id) {
-        const cleanedOverrides = (plan.classOverrides || []).filter(
-          o => !removedClassIds.includes(o.classId)
+        const cleanedClassLessonPlans = (plan.classLessonPlans || []).filter(
+          clp => !removedClassIds.includes(clp.classId)
         );
-        return { ...plan, name: editPlanName.trim(), classIds: editClassIds, lessons: normalizedLessons, classOverrides: cleanedOverrides };
+        return { ...plan, name: editPlanName.trim(), classIds: editClassIds, lessons: normalizedLessons, classLessonPlans: cleanedClassLessonPlans };
       }
       return { ...plan, classIds: (plan.classIds || []).filter(id => !selectedClassSet.has(id)) };
     });
@@ -518,19 +494,21 @@ function LessonPlanPage() {
   const handleSaveClassOverrides = async () => {
     if (!activePlan || !selectedClassTab) return;
     const baseLessons = [...activePlan.lessons].sort((a, b) => a.order - b.order);
-    const baseLessonMap = new Map(baseLessons.map(l => [l.order, l]));
-    const otherOverrides = (activePlan.classOverrides || []).filter(o => o.classId !== selectedClassTab);
-    const newOverrides: ClassLessonOverride[] = classEditData
-      .map(item => ({ classId: selectedClassTab, order: item.order, title: item.title, memo: item.memo }))
-      .filter(o => {
-        const base = baseLessonMap.get(o.order);
-        return !(base && base.title === o.title && base.memo === o.memo);
-      });
+    const isIdenticalToBase =
+      classEditData.length === baseLessons.length &&
+      classEditData.every((item, i) => item.title === baseLessons[i].title && item.memo === baseLessons[i].memo);
+    const otherClassLessonPlans = (activePlan.classLessonPlans || []).filter(clp => clp.classId !== selectedClassTab);
+    const newClassLessonPlans = isIdenticalToBase
+      ? otherClassLessonPlans
+      : [...otherClassLessonPlans, {
+          classId: selectedClassTab,
+          lessons: classEditData.map((item, i) => ({ id: `${selectedClassTab}-${i + 1}`, order: i + 1, title: item.title, memo: item.memo }))
+        }];
     const nextPlans = fallbackPlans.map(p =>
-      p.id === activePlan.id ? { ...p, classOverrides: [...otherOverrides, ...newOverrides] } : p
+      p.id === activePlan.id ? { ...p, classLessonPlans: newClassLessonPlans } : p
     );
     try {
-      await persistPlans(nextPlans);
+      await updateLessonPlans(nextPlans);
       addToast('학급별 수업 계획을 저장했습니다.', 'success');
     } catch {
       addToast('저장에 실패했습니다.');
@@ -539,12 +517,12 @@ function LessonPlanPage() {
 
   const handleResetClassOverrides = async () => {
     if (!activePlan || !selectedClassTab) return;
-    const nextOverrides = (activePlan.classOverrides || []).filter(o => o.classId !== selectedClassTab);
+    const nextClassLessonPlans = (activePlan.classLessonPlans || []).filter(clp => clp.classId !== selectedClassTab);
     const nextPlans = fallbackPlans.map(p =>
-      p.id === activePlan.id ? { ...p, classOverrides: nextOverrides } : p
+      p.id === activePlan.id ? { ...p, classLessonPlans: nextClassLessonPlans } : p
     );
     try {
-      await persistPlans(nextPlans);
+      await updateLessonPlans(nextPlans);
       const baseLessons = [...activePlan.lessons].sort((a, b) => a.order - b.order);
       setClassEditData(baseLessons.map(l => ({ order: l.order, title: l.title, memo: l.memo })));
       addToast('기본 계획으로 초기화했습니다.', 'success');
@@ -561,8 +539,10 @@ function LessonPlanPage() {
     const cls = classes.find(c => c.classId === selectedClassTab);
     if (!cls) return new Map<number, { date: string; period: number }>();
     const endDate = dateUtils.formatDate(dateUtils.addDays(new Date(), 365));
+    const classLessonPlan = (activePlan.classLessonPlans || []).find(clp => clp.classId === selectedClassTab);
+    const lessonsForClass = classLessonPlan ? classLessonPlan.lessons : activePlan.lessons;
     const scheduled = generateClassLessonSchedule(
-      activePlan.lessons, cls, holidays, events, endDate, activePlan.classOverrides
+      lessonsForClass, cls, holidays, events, endDate
     );
     const map = new Map<number, { date: string; period: number }>();
     scheduled.filter(s => s.type === 'lesson' && s.lesson).forEach(s => {
@@ -579,7 +559,7 @@ function LessonPlanPage() {
 
   const activeClassInfo = selectedClassTab ? classes.find(c => c.classId === selectedClassTab) : null;
   const classHasOverride = (classId: string) =>
-    (activePlan?.classOverrides || []).some(o => o.classId === classId);
+    (activePlan?.classLessonPlans || []).some(clp => clp.classId === classId);
 
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500 bg-slate-50/30 dark:bg-slate-900/50 relative">
@@ -1809,8 +1789,9 @@ function ManagePage() {
 
     targetClasses.forEach(cls => {
       const assignedPlan = plans.find(plan => (plan.classIds || []).includes(cls.classId)) || fallbackPlan;
-      const clsLessons = assignedPlan?.lessons || lessons;
-      const clsSchedule = generateClassLessonSchedule(clsLessons, cls, holidays, events, weekEndDateStr, assignedPlan?.classOverrides);
+      const classLessonPlan = (assignedPlan?.classLessonPlans || []).find(clp => clp.classId === cls.classId);
+      const clsLessons = classLessonPlan ? classLessonPlan.lessons : (assignedPlan?.lessons || lessons);
+      const clsSchedule = generateClassLessonSchedule(clsLessons, cls, holidays, events, weekEndDateStr);
       clsSchedule.forEach(item => allItems.push({ item, classInfo: cls }));
     });
     return allItems;
