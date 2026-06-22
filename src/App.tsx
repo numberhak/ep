@@ -1684,8 +1684,8 @@ function ManagePage() {
     }
     // 1교시 시작 전 → 1교시
     if (nowMinutes < PERIOD_TIMES[0].start) return PERIOD_TIMES[0].period;
-    // 마지막 교시 종료 후 → 마지막 교시
-    if (nowMinutes > PERIOD_TIMES[PERIOD_TIMES.length - 1].end) return PERIOD_TIMES[PERIOD_TIMES.length - 1].period;
+    // 마지막 교시 종료 후 → 다음날 1교시 (1교시로 스크롤)
+    if (nowMinutes > PERIOD_TIMES[PERIOD_TIMES.length - 1].end) return PERIOD_TIMES[0].period;
     // 쉬는 시간: 다음 교시 직전 → 다음 교시로
     for (let i = 0; i < PERIOD_TIMES.length - 1; i++) {
       if (nowMinutes > PERIOD_TIMES[i].end && nowMinutes < PERIOD_TIMES[i + 1].start) {
