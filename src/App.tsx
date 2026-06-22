@@ -1334,7 +1334,7 @@ function RecordsPage() {
 
   const [selectedClassId, setSelectedClassId] = useState<string>(pageParams?.classId || (classes[0]?.classId || ''));
   const [newDate, setNewDate] = useState(dateUtils.formatDate(new Date()));
-  const [newContent, setNewContent] = useState('');
+  const [newContent, setNewContent] = useState(() => { try { return sessionStorage.getItem('record_draft') || ''; } catch { return ''; } });
   const [newImportant, setNewImportant] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'records' | 'scorelog'>('records');
@@ -1356,7 +1356,7 @@ function RecordsPage() {
   const handleSave = async () => {
     if (!newContent.trim() || !selectedClassId) return;
     const newRecord: ClassRecord = { id: `rec-${Date.now()}`, classId: selectedClassId, date: newDate, content: newContent, important: newImportant };
-    try { await updateRecords([...records, newRecord]); setNewContent(''); setNewImportant(false); addToast('기록이 저장되었습니다.', 'success'); } catch { addToast('저장에 실패했습니다.'); }
+    try { await updateRecords([...records, newRecord]); setNewContent(''); setNewImportant(false); try { sessionStorage.removeItem('record_draft'); } catch {} addToast('기록이 저장되었습니다.', 'success'); } catch { addToast('저장에 실패했습니다.'); }
   };
 
   const handleDelete = async (id: string) => {
@@ -1524,14 +1524,14 @@ function RecordsPage() {
             </div>
           )}
 
-          <div className="flex-1 flex flex-col md:flex-row gap-4 md:gap-6 min-h-0">
+          <div className="flex flex-col md:flex-1 md:flex-row gap-4 md:gap-6 md:min-h-0">
             {/* 왼쪽: 기록 작성 */}
             <div className="w-full md:w-1/3 flex flex-col gap-4 shrink-0 order-1 md:h-full">
-              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-white dark:border-slate-700 h-full flex flex-col">
+              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-white dark:border-slate-700 md:h-full flex flex-col">
                 <h3 className="font-bold text-lg text-slate-800 dark:text-white mb-5 flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${COLOR_MAP[activeClass.color].bg} border border-gray-300 dark:border-slate-600`}></span>{activeClass.className} 새 기록 작성</h3>
-                <div className="space-y-5 flex-1 flex flex-col">
+                <div className="space-y-5 md:flex-1 flex flex-col">
                   <div><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">날짜</label><input type="date" aria-label="기록 날짜" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3.5 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" /></div>
-                  <div className="flex-1 flex flex-col"><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">내용</label><textarea aria-label="기록 내용" value={newContent} onChange={e => setNewContent(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-4 rounded-xl text-base flex-1 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white min-h-[140px] md:min-h-0" placeholder="이 학급의 오늘 수업 분위기, 특이사항 등을 남겨주세요." /></div>
+                  <div className="md:flex-1 flex flex-col"><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">내용</label><textarea aria-label="기록 내용" value={newContent} onChange={e => { setNewContent(e.target.value); try { sessionStorage.setItem('record_draft', e.target.value); } catch {} }} className="w-full border border-gray-300 dark:border-slate-600 p-4 rounded-xl text-base md:flex-1 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white min-h-[140px]" placeholder="이 학급의 오늘 수업 분위기, 특이사항 등을 남겨주세요." /></div>
                   <label className={`flex items-center gap-3 cursor-pointer select-none px-4 py-3 rounded-xl border transition-colors ${newImportant ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-600' : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700 hover:border-amber-300 dark:hover:border-amber-600'}`}>
                     <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${newImportant ? 'bg-amber-400 border-amber-400' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'}`}>
                       {newImportant && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>}
@@ -1690,25 +1690,35 @@ function ManagePage() {
 
     const direction = weekNavDirectionRef.current;
 
-    // 세로 스크롤: 현재 교시 행으로 이동 (수업 시간 외에는 최상단)
-    const currentPeriod = getCurrentPeriod();
-    const periodRow = currentPeriod !== null ? periodRowRefs.current[currentPeriod - 1] : null;
-    const scrollTop = periodRow ? Math.max(0, periodRow.offsetTop - 80) : 0;
+    // 브라우저 레이아웃 완료 후 스크롤 (double RAF)
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        if (!scrollContainerRef.current) return;
+        const c = scrollContainerRef.current;
 
-    if (direction === 'next') {
-      container.scrollTo({ left: 0, top: scrollTop, behavior: 'smooth' });
-    } else if (direction === 'prev') {
-      container.scrollTo({ left: container.scrollWidth, top: scrollTop, behavior: 'smooth' });
-    } else {
-      const todayCol = todayColRef.current;
-      if (todayCol) {
-        const colLeft = todayCol.offsetLeft;
-        const scrollLeft = Math.max(0, colLeft - 76);
-        container.scrollTo({ left: scrollLeft, top: scrollTop, behavior: 'smooth' });
-      } else {
-        container.scrollTo({ left: 0, top: scrollTop, behavior: 'smooth' });
-      }
-    }
+        // 세로 스크롤: 현재 교시 행으로 이동 (수업 시간 외에는 최상단)
+        const currentPeriod = getCurrentPeriod();
+        const periodRow = currentPeriod !== null ? periodRowRefs.current[currentPeriod - 1] : null;
+        const scrollTop = periodRow ? Math.max(0, periodRow.offsetTop - 80) : 0;
+
+        if (direction === 'next') {
+          c.scrollTo({ left: 0, top: scrollTop, behavior: 'smooth' });
+        } else if (direction === 'prev') {
+          c.scrollTo({ left: c.scrollWidth, top: scrollTop, behavior: 'smooth' });
+        } else {
+          const todayCol = todayColRef.current;
+          if (todayCol) {
+            const colLeft = todayCol.offsetLeft;
+            const scrollLeft = Math.max(0, colLeft - 76);
+            c.scrollTo({ left: scrollLeft, top: scrollTop, behavior: 'smooth' });
+          } else {
+            c.scrollTo({ left: 0, top: scrollTop, behavior: 'smooth' });
+          }
+        }
+      });
+    });
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
   }, [currentWeekStart]);
 
   // iOS Safari용 non-passive 터치 스크롤 제어
@@ -1875,20 +1885,20 @@ function ManagePage() {
             const ddayText = dday === 0 ? 'D-Day' : dday > 0 ? `D-${dday}` : `D+${Math.abs(dday)}`;
             const isToday = dday === 0;
             const isOverdue = dday < 0;
-            const colorCls = isToday
+            const colorCls = isOverdue
+              ? 'bg-rose-600 dark:bg-rose-600 border-rose-700 dark:border-rose-700 text-white'
+              : isToday
               ? 'bg-rose-50 dark:bg-rose-900/30 border-rose-300 dark:border-rose-700/60 text-rose-700 dark:text-rose-200'
-              : isOverdue
-              ? 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-300'
               : 'bg-indigo-50 dark:bg-indigo-900/40 border-indigo-200 dark:border-indigo-700/60 text-indigo-700 dark:text-indigo-200';
-            const ddayColorCls = isToday
+            const ddayColorCls = isOverdue
+              ? 'text-white font-black'
+              : isToday
               ? 'text-rose-600 dark:text-rose-400 font-black'
-              : isOverdue
-              ? 'text-rose-500 dark:text-rose-400 font-black'
               : 'text-indigo-600 dark:text-indigo-400 font-black';
             return (
               <span key={t.id} title={t.title} className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg border max-w-[200px] ${colorCls}`}>
                 <span className={`shrink-0 ${ddayColorCls}`}>{ddayText}</span>
-                <span className="truncate">{t.title}</span>
+                <span className={`truncate ${isOverdue ? 'text-rose-100' : ''}`}>{t.title}</span>
               </span>
             );
           })}
@@ -1906,7 +1916,13 @@ function ManagePage() {
               const dayHolidays = holidays.filter(h => h.date === dateStr && h.isHoliday !== false);
               const dayEvents = holidays.filter(h => h.date === dateStr && h.isHoliday === false);
               const isHolidayDay = dayHolidays.length > 0;
-              const dayTasksForCell = tasks.filter(t => !t.completed && t.date && t.date === dateStr);
+              const dayTasksForCell = tasks.filter(t => {
+                if (t.completed || !t.date) return false;
+                if (t.date === dateStr) return true;
+                // 기한 지난 미완료 업무는 오늘 열에 고정 표시
+                if (isToday && t.date < todayStr) return true;
+                return false;
+              });
 
               return (
                 <div
@@ -1947,9 +1963,9 @@ function ManagePage() {
                       const ddayText = dday === 0 ? 'D-Day' : dday > 0 ? `D-${dday}` : `D+${Math.abs(dday)}`;
                       const isOverdue = dday < 0;
                       return (
-                        <div key={t.id} title={t.title} className={`flex flex-col items-center gap-0.5 text-xs px-1.5 py-1.5 rounded-lg border w-full shadow-sm overflow-hidden ${isOverdue ? 'bg-rose-50 dark:bg-rose-900/30 border-rose-200 dark:border-rose-800/50' : 'bg-indigo-50 dark:bg-indigo-900/50 border-indigo-200 dark:border-indigo-700/80'}`}>
-                          <span className={`text-sm font-black leading-none ${isOverdue ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>
-                          <span className={`w-full text-center text-[10px] font-bold leading-tight line-clamp-2 break-keep ${isOverdue ? 'text-rose-800 dark:text-rose-200' : 'text-indigo-800 dark:text-indigo-200'}`}>{t.title}</span>
+                        <div key={t.id} title={t.title} className={`flex flex-col items-center gap-0.5 text-xs px-1.5 py-1.5 rounded-lg border w-full shadow-sm overflow-hidden ${isOverdue ? 'bg-rose-600 dark:bg-rose-600 border-rose-700 dark:border-rose-700' : 'bg-indigo-50 dark:bg-indigo-900/50 border-indigo-200 dark:border-indigo-700/80'}`}>
+                          <span className={`text-sm font-black leading-none ${isOverdue ? 'text-white' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>
+                          <span className={`w-full text-center text-[10px] font-bold leading-tight line-clamp-2 break-keep ${isOverdue ? 'text-rose-100' : 'text-indigo-800 dark:text-indigo-200'}`}>{t.title}</span>
                         </div>
                       );
                     })}
