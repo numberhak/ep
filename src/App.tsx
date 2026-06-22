@@ -1526,12 +1526,12 @@ function RecordsPage() {
 
           <div className="flex flex-col md:flex-1 md:flex-row gap-4 md:gap-6 md:min-h-0">
             {/* 왼쪽: 기록 작성 */}
-            <div className="w-full md:w-1/3 flex flex-col gap-4 shrink-0 order-1 md:h-full">
-              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-white dark:border-slate-700 md:h-full flex flex-col">
+            <div className="w-full md:w-1/3 flex flex-col shrink-0 order-1 md:h-full md:overflow-y-auto">
+              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-white dark:border-slate-700 flex flex-col">
                 <h3 className="font-bold text-lg text-slate-800 dark:text-white mb-5 flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${COLOR_MAP[activeClass.color].bg} border border-gray-300 dark:border-slate-600`}></span>{activeClass.className} 새 기록 작성</h3>
-                <div className="space-y-5 md:flex-1 flex flex-col">
+                <div className="space-y-5 flex flex-col">
                   <div><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">날짜</label><input type="date" aria-label="기록 날짜" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3.5 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" /></div>
-                  <div className="md:flex-1 flex flex-col"><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">내용</label><textarea aria-label="기록 내용" value={newContent} onChange={e => { setNewContent(e.target.value); try { sessionStorage.setItem('record_draft', e.target.value); } catch {} }} className="w-full border border-gray-300 dark:border-slate-600 p-4 rounded-xl text-base md:flex-1 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white min-h-[140px]" placeholder="이 학급의 오늘 수업 분위기, 특이사항 등을 남겨주세요." /></div>
+                  <div className="flex flex-col"><label className="block text-sm font-bold text-gray-500 dark:text-gray-400 mb-2">내용</label><textarea aria-label="기록 내용" value={newContent} onChange={e => { setNewContent(e.target.value); try { sessionStorage.setItem('record_draft', e.target.value); } catch {} }} className="w-full border border-gray-300 dark:border-slate-600 p-4 rounded-xl text-base resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white min-h-[160px] md:min-h-[200px]" placeholder="이 학급의 오늘 수업 분위기, 특이사항 등을 남겨주세요." /></div>
                   <label className={`flex items-center gap-3 cursor-pointer select-none px-4 py-3 rounded-xl border transition-colors ${newImportant ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-600' : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700 hover:border-amber-300 dark:hover:border-amber-600'}`}>
                     <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${newImportant ? 'bg-amber-400 border-amber-400' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'}`}>
                       {newImportant && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>}
@@ -1539,7 +1539,7 @@ function RecordsPage() {
                     <input type="checkbox" className="sr-only" checked={newImportant} onChange={e => setNewImportant(e.target.checked)} />
                     <span className={`text-sm font-bold ${newImportant ? 'text-amber-700 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}`}>⭐ 중요 기록으로 표시</span>
                   </label>
-                  <button onClick={handleSave} className="w-full py-4 bg-slate-800 dark:bg-indigo-600 hover:bg-slate-900 dark:hover:bg-indigo-500 text-white text-base font-bold rounded-xl shadow-sm transition-colors mt-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 dark:focus-visible:ring-indigo-400 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-800">기록 저장하기</button>
+                  <button onClick={handleSave} className="w-full py-4 bg-slate-800 dark:bg-indigo-600 hover:bg-slate-900 dark:hover:bg-indigo-500 text-white text-base font-bold rounded-xl shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 dark:focus-visible:ring-indigo-400 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-800">기록 저장하기</button>
                 </div>
               </div>
             </div>
@@ -1675,13 +1675,24 @@ function ManagePage() {
     { period: 7, start: 15*60+10, end: 15*60+55 },
   ];
 
-  const getCurrentPeriod = (): number | null => {
+  const getCurrentPeriod = (): number => {
     const now = new Date();
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    // 수업 중이면 해당 교시
     for (const pt of PERIOD_TIMES) {
       if (nowMinutes >= pt.start && nowMinutes <= pt.end) return pt.period;
     }
-    return null;
+    // 1교시 시작 전 → 1교시
+    if (nowMinutes < PERIOD_TIMES[0].start) return PERIOD_TIMES[0].period;
+    // 마지막 교시 종료 후 → 마지막 교시
+    if (nowMinutes > PERIOD_TIMES[PERIOD_TIMES.length - 1].end) return PERIOD_TIMES[PERIOD_TIMES.length - 1].period;
+    // 쉬는 시간: 다음 교시 직전 → 다음 교시로
+    for (let i = 0; i < PERIOD_TIMES.length - 1; i++) {
+      if (nowMinutes > PERIOD_TIMES[i].end && nowMinutes < PERIOD_TIMES[i + 1].start) {
+        return PERIOD_TIMES[i + 1].period;
+      }
+    }
+    return PERIOD_TIMES[0].period;
   };
 
   useEffect(() => {
@@ -1697,9 +1708,9 @@ function ManagePage() {
         if (!scrollContainerRef.current) return;
         const c = scrollContainerRef.current;
 
-        // 세로 스크롤: 현재 교시 행으로 이동 (수업 시간 외에는 최상단)
+        // 세로 스크롤: 현재 시간에 가장 가까운 교시 행으로 이동
         const currentPeriod = getCurrentPeriod();
-        const periodRow = currentPeriod !== null ? periodRowRefs.current[currentPeriod - 1] : null;
+        const periodRow = periodRowRefs.current[currentPeriod - 1];
         const scrollTop = periodRow ? Math.max(0, periodRow.offsetTop - 80) : 0;
 
         if (direction === 'next') {
@@ -1886,19 +1897,19 @@ function ManagePage() {
             const isToday = dday === 0;
             const isOverdue = dday < 0;
             const colorCls = isOverdue
-              ? 'bg-rose-600 dark:bg-rose-600 border-rose-700 dark:border-rose-700 text-white'
+              ? 'bg-rose-100 dark:bg-rose-900/40 border-rose-300 dark:border-rose-700/60 text-rose-800 dark:text-rose-200'
               : isToday
               ? 'bg-rose-50 dark:bg-rose-900/30 border-rose-300 dark:border-rose-700/60 text-rose-700 dark:text-rose-200'
               : 'bg-indigo-50 dark:bg-indigo-900/40 border-indigo-200 dark:border-indigo-700/60 text-indigo-700 dark:text-indigo-200';
             const ddayColorCls = isOverdue
-              ? 'text-white font-black'
+              ? 'text-rose-700 dark:text-rose-300 font-black'
               : isToday
               ? 'text-rose-600 dark:text-rose-400 font-black'
               : 'text-indigo-600 dark:text-indigo-400 font-black';
             return (
               <span key={t.id} title={t.title} className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg border max-w-[200px] ${colorCls}`}>
                 <span className={`shrink-0 ${ddayColorCls}`}>{ddayText}</span>
-                <span className={`truncate ${isOverdue ? 'text-rose-100' : ''}`}>{t.title}</span>
+                <span className="truncate">{t.title}</span>
               </span>
             );
           })}
@@ -1963,9 +1974,9 @@ function ManagePage() {
                       const ddayText = dday === 0 ? 'D-Day' : dday > 0 ? `D-${dday}` : `D+${Math.abs(dday)}`;
                       const isOverdue = dday < 0;
                       return (
-                        <div key={t.id} title={t.title} className={`flex flex-col items-center gap-0.5 text-xs px-1.5 py-1.5 rounded-lg border w-full shadow-sm overflow-hidden ${isOverdue ? 'bg-rose-600 dark:bg-rose-600 border-rose-700 dark:border-rose-700' : 'bg-indigo-50 dark:bg-indigo-900/50 border-indigo-200 dark:border-indigo-700/80'}`}>
-                          <span className={`text-sm font-black leading-none ${isOverdue ? 'text-white' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>
-                          <span className={`w-full text-center text-[10px] font-bold leading-tight line-clamp-2 break-keep ${isOverdue ? 'text-rose-100' : 'text-indigo-800 dark:text-indigo-200'}`}>{t.title}</span>
+                        <div key={t.id} title={t.title} className={`flex flex-col items-center gap-0.5 text-xs px-1.5 py-1.5 rounded-lg border w-full shadow-sm overflow-hidden ${isOverdue ? 'bg-rose-100 dark:bg-rose-900/40 border-rose-300 dark:border-rose-700/60' : 'bg-indigo-50 dark:bg-indigo-900/50 border-indigo-200 dark:border-indigo-700/80'}`}>
+                          <span className={`text-sm font-black leading-none ${isOverdue ? 'text-rose-700 dark:text-rose-300' : 'text-indigo-600 dark:text-indigo-400'}`}>{ddayText}</span>
+                          <span className={`w-full text-center text-[10px] font-bold leading-tight line-clamp-2 break-keep ${isOverdue ? 'text-rose-800 dark:text-rose-200' : 'text-indigo-800 dark:text-indigo-200'}`}>{t.title}</span>
                         </div>
                       );
                     })}
