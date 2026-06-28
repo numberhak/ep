@@ -40,11 +40,11 @@ const loadFromLocal = (key: string, fallback: any) => {
 // ==========================================
 export interface Lesson { id: string; order: number; title: string; memo: string; }
 export interface ClassLessonPlan { classId: string; lessons: Lesson[]; }
-export interface LessonPlan { id: string; name: string; classIds: string[]; lessons: Lesson[]; classLessonPlans?: ClassLessonPlan[]; }
+export interface LessonPlan { id: string; name: string; semester?: 1 | 2; classIds: string[]; lessons: Lesson[]; classLessonPlans?: ClassLessonPlan[]; }
 export interface WeeklySlot { dayOfWeek: number; period: number; }
 export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan';
 export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; classScore?: number; groupScores?: number[]; }
-export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; }
+export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; periods?: number[]; }
 export interface ClassEvent { id: string; classId: string; date: string; period: number; title: string; type: 'exception' | 'extra' | 'replace'; }
 export interface ClassRecord { id: string; classId: string; date: string; content: string; important?: boolean; }
 export interface UserProfile { name: string; subject: string; }
@@ -108,7 +108,12 @@ function generateClassLessonSchedule(
   viewEndDateStr: string
 ): ScheduledItem[] {
   const sortedLessons = [...lessons].sort((a, b) => a.order - b.order);
-  const holidaySet = new Set(holidays.map(h => h.date));
+  const allDayHolidaySet = new Set(holidays.filter(h => !h.periods || h.periods.length === 0).map(h => h.date));
+  const periodHolidayMap = new Map<string, Set<number>>();
+  holidays.filter(h => h.periods && h.periods.length > 0).forEach(h => {
+    if (!periodHolidayMap.has(h.date)) periodHolidayMap.set(h.date, new Set());
+    h.periods!.forEach(p => periodHolidayMap.get(h.date)!.add(p));
+  });
 
   const classEvents = events.filter(e => e.classId === schedule.classId);
   const eventMap = new Map<string, ClassEvent>();
@@ -127,7 +132,7 @@ function generateClassLessonSchedule(
     const dateStr = dateUtils.formatDate(currentDate);
     const dayOfWeek = currentDate.getDay();
 
-    if (dayOfWeek >= 1 && dayOfWeek <= 5 && !holidaySet.has(dateStr)) {
+    if (dayOfWeek >= 1 && dayOfWeek <= 5 && !allDayHolidaySet.has(dateStr)) {
       const baseSlots = schedule.weeklySlots
         .filter(s => s.dayOfWeek === dayOfWeek)
         .map(s => s.period);
@@ -142,6 +147,7 @@ function generateClassLessonSchedule(
       );
 
       for (const period of allPeriodsToday) {
+        if (periodHolidayMap.has(dateStr) && periodHolidayMap.get(dateStr)!.has(period)) continue;
         if (lessonIndex >= sortedLessons.length && !eventMap.has(`${dateStr}-${period}`)) break;
         const eventKey = `${dateStr}-${period}`;
         const classEvent = eventMap.get(eventKey);
@@ -178,7 +184,7 @@ const MOCK_LESSONS: Lesson[] = [
   { id: '3', order: 3, title: '항등식과 나머지 정리', memo: '조립제법 활용' },
 ];
 const DEFAULT_LESSON_PLANS: LessonPlan[] = [
-  { id: 'plan-default', name: '기본 수업계획서', classIds: [], lessons: MOCK_LESSONS },
+  { id: 'plan-default', name: '기본 수업계획서', semester: 1, classIds: [], lessons: MOCK_LESSONS },
 ];
 const MOCK_SCHEDULES: ClassSchedule[] = [
   { classId: 'c1', className: '2학년 6반', startDate: '2026-05-04', color: 'blue',  weeklySlots: [{ dayOfWeek: 1, period: 2 }, { dayOfWeek: 3, period: 5 }], classScore: 12 },
@@ -276,24 +282,28 @@ function LessonPlanPage() {
     { id: 'plan-default', name: '기본 수업계획서', classIds: [], lessons }
   ];
 
+  const [selectedSemester, setSelectedSemester] = useState<1 | 2>(1);
   const [selectedPlanId, setSelectedPlanId] = useState<string>(fallbackPlans[0]?.id || '');
   const [isEditMode, setIsEditMode] = useState(false);
   const [editData, setEditData] = useState<Lesson[]>([]);
   const [editPlanName, setEditPlanName] = useState('');
   const [editClassIds, setEditClassIds] = useState<string[]>([]);
+  const [editSemester, setEditSemester] = useState<1 | 2>(1);
   const [planToDelete, setPlanToDelete] = useState<LessonPlan | null>(null);
+
+  const semesterPlans = fallbackPlans.filter(p => (p.semester ?? 1) === selectedSemester);
 
   // 학급별 탭: null = 기본 계획, classId = 해당 학급 override 편집
   const [selectedClassTab, setSelectedClassTab] = useState<string | null>(null);
   const [classEditData, setClassEditData] = useState<{ order: number; title: string; memo: string }[]>([]);
 
-  const activePlan = fallbackPlans.find(p => p.id === selectedPlanId) || fallbackPlans[0];
+  const activePlan = semesterPlans.find(p => p.id === selectedPlanId) || semesterPlans[0] || fallbackPlans[0];
 
   useEffect(() => {
-    if (fallbackPlans.length > 0 && !fallbackPlans.some(p => p.id === selectedPlanId)) {
-      setSelectedPlanId(fallbackPlans[0].id);
+    if (semesterPlans.length > 0 && !semesterPlans.some(p => p.id === selectedPlanId)) {
+      setSelectedPlanId(semesterPlans[0].id);
     }
-  }, [fallbackPlans, selectedPlanId]);
+  }, [semesterPlans, selectedPlanId, selectedSemester]);
 
   useEffect(() => {
     if (!activePlan) return;
@@ -337,6 +347,7 @@ function LessonPlanPage() {
     setEditData([...(activePlan.lessons || [])].sort((a, b) => a.order - b.order));
     setEditPlanName(activePlan.name);
     setEditClassIds([...(activePlan.classIds || [])]);
+    setEditSemester((activePlan.semester ?? 1) as 1 | 2);
     setIsEditMode(true);
   };
 
@@ -349,7 +360,8 @@ function LessonPlanPage() {
   const handleAddPlan = async () => {
     const newPlan: LessonPlan = {
       id: `plan-${Date.now()}`,
-      name: `새 수업계획서 ${fallbackPlans.length + 1}`,
+      name: `새 수업계획서 ${semesterPlans.length + 1}`,
+      semester: selectedSemester,
       classIds: [],
       lessons: [{ id: `l-${Date.now()}`, order: 1, title: '', memo: '' }]
     };
@@ -358,6 +370,7 @@ function LessonPlanPage() {
       setSelectedPlanId(newPlan.id);
       setEditPlanName(newPlan.name);
       setEditClassIds([]);
+      setEditSemester(selectedSemester);
       setEditData(newPlan.lessons);
       setSelectedClassTab(null);
       setIsEditMode(true);
@@ -394,7 +407,7 @@ function LessonPlanPage() {
         const cleanedClassLessonPlans = (plan.classLessonPlans || []).filter(
           clp => !removedClassIds.includes(clp.classId)
         );
-        return { ...plan, name: editPlanName.trim(), classIds: editClassIds, lessons: normalizedLessons, classLessonPlans: cleanedClassLessonPlans };
+        return { ...plan, name: editPlanName.trim(), semester: editSemester, classIds: editClassIds, lessons: normalizedLessons, classLessonPlans: cleanedClassLessonPlans };
       }
       return { ...plan, classIds: (plan.classIds || []).filter(id => !selectedClassSet.has(id)) };
     });
@@ -590,8 +603,23 @@ function LessonPlanPage() {
           </div>
         </div>
 
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 shrink-0">학기:</span>
+          <div className="flex gap-1.5 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl">
+            {([1, 2] as const).map(sem => (
+              <button
+                key={sem}
+                onClick={() => { setSelectedSemester(sem); setIsEditMode(false); setSelectedClassTab(null); }}
+                className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-colors ${selectedSemester === sem ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-300' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+              >
+                {sem}학기
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
-          {fallbackPlans.map(plan => {
+          {semesterPlans.map(plan => {
             const isSelected = activePlan?.id === plan.id;
             return (
               <button
@@ -618,9 +646,19 @@ function LessonPlanPage() {
             {isEditMode ? (
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-[minmax(240px,360px)_1fr] gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">수업계획서 이름</label>
-                    <input value={editPlanName} onChange={e => setEditPlanName(e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="예: 2학년 정규 수업" />
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">수업계획서 이름</label>
+                      <input value={editPlanName} onChange={e => setEditPlanName(e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="예: 2학년 정규 수업" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">학기</label>
+                      <div className="flex gap-2 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl w-fit">
+                        {([1, 2] as const).map(sem => (
+                          <button key={sem} type="button" onClick={() => setEditSemester(sem)} className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-colors ${editSemester === sem ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-300' : 'text-slate-500'}`}>{sem}학기</button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">적용 학급</label>
@@ -2490,10 +2528,17 @@ function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
   const [endDate, setEndDate] = useState('');
   const [newTitle, setNewTitle] = useState('');
   const [isHolidayType, setIsHolidayType] = useState(true);
+  const [allDay, setAllDay] = useState(true);
+  const [selectedPeriods, setSelectedPeriods] = useState<number[]>([]);
   const [error, setError] = useState('');
+
+  const togglePeriod = (p: number) => {
+    setSelectedPeriods(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p].sort((a, b) => a - b));
+  };
 
   const handleAdd = () => {
     if (!startDate || !endDate || !newTitle.trim()) { setError('날짜와 내용을 입력하세요.'); return; }
+    if (!allDay && selectedPeriods.length === 0) { setError('교시를 1개 이상 선택하세요.'); return; }
     const start = dateUtils.parseDate(startDate);
     const end = dateUtils.parseDate(endDate);
     if (start > end) { setError('종료일이 시작일보다 빠를 수 없습니다.'); return; }
@@ -2501,7 +2546,13 @@ function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
     const newHolidays: Holiday[] = [];
     let curr = start;
     while (curr <= end) {
-      newHolidays.push({ id: `h-${Date.now()}-${Math.random().toString(36).substr(2,9)}`, date: dateUtils.formatDate(curr), title: newTitle, isHoliday: isHolidayType });
+      newHolidays.push({
+        id: `h-${Date.now()}-${Math.random().toString(36).substr(2,9)}`,
+        date: dateUtils.formatDate(curr),
+        title: newTitle,
+        isHoliday: isHolidayType,
+        periods: allDay ? undefined : [...selectedPeriods],
+      });
       curr = dateUtils.addDays(curr, 1);
     }
     onAdd(newHolidays);
@@ -2520,8 +2571,35 @@ function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
               <button onClick={() => setIsHolidayType(true)} className={`flex-1 py-2.5 rounded-lg font-bold transition-colors ${isHolidayType ? 'bg-white dark:bg-slate-800 shadow-sm text-rose-600 dark:text-rose-400' : 'text-slate-500'}`}>휴강 (공휴일 등)</button>
               <button onClick={() => setIsHolidayType(false)} className={`flex-1 py-2.5 rounded-lg font-bold transition-colors ${!isHolidayType ? 'bg-white dark:bg-slate-800 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-500'}`}>단순 일정 (평가 등)</button>
             </div>
-            <p className="text-[10px] text-gray-500 mt-2 ml-1">* 어떤 유형으로 등록하든 해당 요일의 정규 수업은 다음 차시로 밀립니다.</p>
+            <p className="text-[10px] text-gray-500 mt-2 ml-1">* 해당 날짜(또는 교시)의 정규 수업은 다음 차시로 밀립니다.</p>
           </div>
+          <div>
+            <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">적용 범위</label>
+            <div className="flex gap-2 bg-slate-100 dark:bg-slate-900 p-1.5 rounded-xl">
+              <button onClick={() => { setAllDay(true); setSelectedPeriods([]); }} className={`flex-1 py-2.5 rounded-lg font-bold transition-colors ${allDay ? 'bg-white dark:bg-slate-800 shadow-sm text-slate-800 dark:text-white' : 'text-slate-500'}`}>하루 종일</button>
+              <button onClick={() => setAllDay(false)} className={`flex-1 py-2.5 rounded-lg font-bold transition-colors ${!allDay ? 'bg-white dark:bg-slate-800 shadow-sm text-indigo-600 dark:text-indigo-400' : 'text-slate-500'}`}>교시 지정</button>
+            </div>
+          </div>
+          {!allDay && (
+            <div>
+              <label className="block font-bold text-gray-700 dark:text-gray-300 mb-2">교시 선택</label>
+              <div className="flex flex-wrap gap-2">
+                {[1,2,3,4,5,6,7].map(p => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => togglePeriod(p)}
+                    className={`w-10 h-10 rounded-xl text-sm font-bold border transition-colors ${selectedPeriods.includes(p) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'}`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+              {selectedPeriods.length > 0 && (
+                <p className="text-xs text-indigo-600 dark:text-indigo-400 font-bold mt-2">{selectedPeriods.join(', ')}교시 선택됨</p>
+              )}
+            </div>
+          )}
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">시작일</label>
@@ -2731,6 +2809,9 @@ function SettingsPage() {
                   <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold ${h.isHoliday !== false ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'}`}>{h.isHoliday !== false ? '휴강' : '일정'}</span>
                   <span className="font-bold text-rose-900 dark:text-rose-200 text-xs md:text-sm">{h.date}</span>
                   <span className="font-medium text-rose-700 dark:text-rose-300 text-xs md:text-sm">{h.title}</span>
+                  {h.periods && h.periods.length > 0 && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">{h.periods.join(',')}교시</span>
+                  )}
                 </div>
                 <button aria-label="전체 일정 삭제" onClick={() => handleDeleteHoliday(h.id || h.date)} className="text-sm text-gray-400 hover:text-red-500 font-black p-1">✕</button>
               </div>
