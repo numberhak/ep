@@ -106,7 +106,9 @@ function generateClassLessonSchedule(
   schedule: ClassSchedule,
   holidays: Holiday[],
   events: ClassEvent[],
-  viewEndDateStr: string
+  viewEndDateStr: string,
+  startOverrideStr?: string,
+  endExclusiveStr?: string | null,
 ): ScheduledItem[] {
   const sortedLessons = [...lessons].sort((a, b) => a.order - b.order);
 
@@ -141,8 +143,13 @@ function generateClassLessonSchedule(
   );
 
   const scheduledItems: ScheduledItem[] = [];
-  let currentDate = dateUtils.parseDate(schedule.startDate);
-  const endLimitDate = dateUtils.addDays(dateUtils.parseDate(viewEndDateStr), 30);
+  let currentDate = dateUtils.parseDate(startOverrideStr || schedule.startDate);
+  // 이 구간이 적용되는 마지막 날짜 (다음 계획서 시작 전날, 없으면 뷰 끝 + 여유)
+  let endLimitDate = dateUtils.addDays(dateUtils.parseDate(viewEndDateStr), 30);
+  if (endExclusiveStr) {
+    const segEnd = dateUtils.addDays(dateUtils.parseDate(endExclusiveStr), -1);
+    if (segEnd < endLimitDate) endLimitDate = segEnd;
+  }
   let lessonIndex = 0;
 
   while (lessonIndex < sortedLessons.length && currentDate <= endLimitDate) {
@@ -204,22 +211,43 @@ function generateClassLessonSchedule(
   return scheduledItems;
 }
 
-// 학기별 기본 수업계획서 — 모든 학급에 자동 적용.
-// 과거 데이터로 같은 학기 계획서가 여러 개일 수 있으므로, 차시가 가장 많은 계획을 기준으로
-// 병합하고 학급별 override(classLessonPlans)는 모두 합쳐서 하나의 기본 계획으로 반환한다.
+// 학기 내 계획서들을 시작일 순으로 정렬 (시작일 없는 기본 계획이 먼저)
+function getSemesterPlansSorted(plans: LessonPlan[], semester: 1 | 2): LessonPlan[] {
+  return plans
+    .filter(p => (p.semester ?? 1) === semester)
+    .sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+}
+
+// 학기별 첫 번째(기본) 계획서 — 레거시 lessons 동기화 및 폴백용
 function getBasePlanForSemester(plans: LessonPlan[], semester: 1 | 2): LessonPlan | undefined {
-  const matching = plans.filter(p => (p.semester ?? 1) === semester);
-  if (matching.length === 0) return undefined;
-  if (matching.length === 1) return matching[0];
-  const primary = matching.reduce((a, b) => (b.lessons?.length || 0) > (a.lessons?.length || 0) ? b : a, matching[0]);
-  const mergedOverrides: ClassLessonPlan[] = [];
-  const seen = new Set<string>();
-  for (const p of matching) {
-    for (const clp of (p.classLessonPlans || [])) {
-      if (!seen.has(clp.classId)) { seen.add(clp.classId); mergedOverrides.push(clp); }
-    }
+  return getSemesterPlansSorted(plans, semester)[0];
+}
+
+// 한 학급의 학기 내 기간별 수업계획 구간 (시작일 순). 내용 없는 계획서는 제외.
+function getPlanSegmentsForClass(
+  plans: LessonPlan[], semester: 1 | 2, cls: ClassSchedule
+): { plan: LessonPlan; start: string; lessons: Lesson[] }[] {
+  const sem2 = (cls.semesterSchedules || []).find(s => s.semester === 2);
+  const semesterStart = semester === 2 ? (sem2?.startDate || cls.startDate) : cls.startDate;
+  return getSemesterPlansSorted(plans, semester)
+    .filter(p => (p.lessons?.length || 0) > 0 || (p.classLessonPlans?.length || 0) > 0)
+    .map(p => ({ plan: p, start: p.startDate || semesterStart, lessons: getLessonsForClass(p, cls.classId, p.lessons) }))
+    .sort((a, b) => a.start.localeCompare(b.start));
+}
+
+// 기간별 계획서를 이어붙여 한 학급의 전체 일정 생성 (각 구간은 자기 시작일~다음 구간 직전까지)
+function generateSegmentedSchedule(
+  plans: LessonPlan[], semester: 1 | 2, cls: ClassSchedule,
+  holidays: Holiday[], events: ClassEvent[], viewEndDateStr: string
+): ScheduledItem[] {
+  const segs = getPlanSegmentsForClass(plans, semester, cls);
+  if (segs.length === 0) return [];
+  const out: ScheduledItem[] = [];
+  for (let i = 0; i < segs.length; i++) {
+    const endExclusive = i + 1 < segs.length ? segs[i + 1].start : null;
+    out.push(...generateClassLessonSchedule(segs[i].lessons, cls, holidays, events, viewEndDateStr, segs[i].start, endExclusive));
   }
-  return { ...primary, classLessonPlans: mergedOverrides };
+  return out;
 }
 // 특정 학급에 적용될 차시 목록 (학급별 override 우선, 없으면 기본 계획)
 function getLessonsForClass(plan: LessonPlan | undefined, classId: string, fallback: Lesson[]): Lesson[] {
@@ -336,6 +364,7 @@ function LessonPlanPage() {
   ];
 
   const [selectedSemester, setSelectedSemester] = useState<1 | 2>(1);
+  const [selectedPlanId, setSelectedPlanId] = useState<string>('');
   const [isEditMode, setIsEditMode] = useState(false);
   const [editData, setEditData] = useState<Lesson[]>([]);
   const [editPlanName, setEditPlanName] = useState('');
@@ -346,15 +375,20 @@ function LessonPlanPage() {
   const [selectedClassTab, setSelectedClassTab] = useState<string | null>(null);
   const [classEditData, setClassEditData] = useState<{ order: number; title: string; memo: string }[]>([]);
 
-  // 선택한 학기의 기본 수업계획서 (모든 학급에 자동 적용). 없으면 합성 계획서.
-  const realBasePlan = getBasePlanForSemester(fallbackPlans, selectedSemester);
-  const activePlan = useMemo<LessonPlan>(() => realBasePlan || {
-    id: `plan-sem${selectedSemester}-base`,
-    name: `${selectedSemester}학기 수업계획서`,
-    semester: selectedSemester,
-    classIds: [],
-    lessons: [],
-  }, [realBasePlan, selectedSemester]);
+  // 선택 학기의 기간별 수업계획서 목록 (시작일 순). 한 학기에 여러 계획서를 기간별로 적용.
+  const semesterPlans = useMemo(() => getSemesterPlansSorted(fallbackPlans, selectedSemester), [fallbackPlans, selectedSemester]);
+  const activePlan = useMemo<LessonPlan>(() => {
+    return semesterPlans.find(p => p.id === selectedPlanId)
+      || semesterPlans[0]
+      || { id: `plan-sem${selectedSemester}-base`, name: `${selectedSemester}학기 수업계획서`, semester: selectedSemester, classIds: [], lessons: [] };
+  }, [semesterPlans, selectedPlanId, selectedSemester]);
+
+  // 학기 전환/계획 목록 변경 시 유효한 계획 선택 유지
+  useEffect(() => {
+    if (semesterPlans.length > 0 && !semesterPlans.some(p => p.id === selectedPlanId)) {
+      setSelectedPlanId(semesterPlans[0].id);
+    }
+  }, [semesterPlans, selectedPlanId]);
 
   useEffect(() => {
     setEditData([...(activePlan.lessons || [])].sort((a, b) => a.order - b.order));
@@ -363,6 +397,13 @@ function LessonPlanPage() {
     setSelectedClassTab(null);
     setIsEditMode(false);
   }, [activePlan.id]);
+
+  // activePlan의 적용 기간 (다음 계획서 시작 전날까지)
+  const activePlanRange = useMemo(() => {
+    const start = activePlan.startDate || '';
+    const next = semesterPlans.find(p => (p.startDate || '') > start && p.id !== activePlan.id);
+    return { start, endExclusive: next?.startDate || null };
+  }, [activePlan, semesterPlans]);
 
   // 학급 탭 선택 시 override 데이터 로드 (기본 계획 내용 기준으로 복제)
   const handleSelectClassTab = (classId: string | null) => {
@@ -376,15 +417,62 @@ function LessonPlanPage() {
     }
   };
 
-  // 기본 계획서 저장 — 같은 학기 계획서는 하나로 통합(과거 분산 데이터 정리), 다른 학기는 유지.
-  // 1학기 기본 계획은 레거시 lessons에도 반영.
-  const persistBasePlan = async (updatedPlan: LessonPlan) => {
-    const others = fallbackPlans.filter(p => (p.semester ?? 1) !== selectedSemester);
-    const nextPlans = [...others, { ...updatedPlan, semester: selectedSemester }]
-      .sort((a, b) => (a.semester ?? 1) - (b.semester ?? 1));
+  // 계획서 하나를 저장(없으면 추가, 있으면 갱신). 1학기 첫 계획은 레거시 lessons에도 반영.
+  const persistPlan = async (updatedPlan: LessonPlan) => {
+    const withSem = { ...updatedPlan, semester: selectedSemester };
+    const exists = fallbackPlans.some(p => p.id === withSem.id);
+    const nextPlans = exists
+      ? fallbackPlans.map(p => p.id === withSem.id ? withSem : p)
+      : [...fallbackPlans, withSem];
     await updateLessonPlans(nextPlans);
     const sem1Base = getBasePlanForSemester(nextPlans, 1);
     if (sem1Base) await updateLessons(sem1Base.lessons);
+    return withSem.id;
+  };
+
+  const handleSelectPlan = (planId: string) => {
+    setIsEditMode(false);
+    setSelectedClassTab(null);
+    setSelectedPlanId(planId);
+  };
+
+  const handleAddPlan = async () => {
+    const newPlan: LessonPlan = {
+      id: `plan-${Date.now()}`,
+      name: `${selectedSemester}학기 수업 계획 ${semesterPlans.length + 1}`,
+      semester: selectedSemester,
+      classIds: [],
+      startDate: undefined,
+      lessons: [{ id: `l-${Date.now()}`, order: 1, title: '', memo: '' }],
+    };
+    try {
+      await persistPlan(newPlan);
+      setSelectedPlanId(newPlan.id);
+      setSelectedClassTab(null);
+      setEditData([...newPlan.lessons]);
+      setEditPlanName(newPlan.name);
+      setEditStartDate('');
+      setIsEditMode(true);
+      addToast('새 수업계획서를 추가했습니다. 적용 시작일을 지정하세요.', 'success');
+    } catch {
+      addToast('수업계획서 추가에 실패했습니다.');
+    }
+  };
+
+  const handleDeletePlan = async () => {
+    if (semesterPlans.length <= 1) { addToast('학기당 최소 1개의 계획서가 필요합니다.'); return; }
+    const nextPlans = fallbackPlans.filter(p => p.id !== activePlan.id);
+    try {
+      await updateLessonPlans(nextPlans);
+      const sem1Base = getBasePlanForSemester(nextPlans, 1);
+      if (sem1Base) await updateLessons(sem1Base.lessons);
+      setSelectedPlanId('');
+      setIsEditMode(false);
+      setSelectedClassTab(null);
+      addToast('수업계획서를 삭제했습니다.', 'success');
+    } catch {
+      addToast('삭제에 실패했습니다.');
+    }
   };
 
   const startEditCurrentPlan = () => {
@@ -405,7 +493,8 @@ function LessonPlanPage() {
       lessons: normalizedLessons,
     };
     try {
-      await persistBasePlan(updatedPlan);
+      const id = await persistPlan(updatedPlan);
+      setSelectedPlanId(id);
       setIsEditMode(false);
       addToast('저장되었습니다.', 'success');
     } catch {
@@ -421,7 +510,7 @@ function LessonPlanPage() {
   };
 
   const saveActivePlanLessons = async (nextLessons: Lesson[]) => {
-    await persistBasePlan({ ...activePlan, lessons: nextLessons });
+    await persistPlan({ ...activePlan, lessons: nextLessons });
   };
 
   const handleAdd = () => {
@@ -506,7 +595,7 @@ function LessonPlanPage() {
           lessons: classEditData.map((item, i) => ({ id: `${selectedClassTab}-${i + 1}`, order: i + 1, title: item.title, memo: item.memo }))
         }];
     try {
-      await persistBasePlan({ ...activePlan, classLessonPlans: newClassLessonPlans });
+      await persistPlan({ ...activePlan, classLessonPlans: newClassLessonPlans });
       addToast('학급별 수업 계획을 저장했습니다.', 'success');
     } catch {
       addToast('저장에 실패했습니다.');
@@ -517,7 +606,7 @@ function LessonPlanPage() {
     if (!selectedClassTab) return;
     const nextClassLessonPlans = (activePlan.classLessonPlans || []).filter(clp => clp.classId !== selectedClassTab);
     try {
-      await persistBasePlan({ ...activePlan, classLessonPlans: nextClassLessonPlans });
+      await persistPlan({ ...activePlan, classLessonPlans: nextClassLessonPlans });
       const baseLessons = [...activePlan.lessons].sort((a, b) => a.order - b.order);
       setClassEditData(baseLessons.map(l => ({ order: l.order, title: l.title, memo: l.memo })));
       addToast('기본 계획으로 초기화했습니다.', 'success');
@@ -536,17 +625,19 @@ function LessonPlanPage() {
     const endDate = dateUtils.formatDate(dateUtils.addDays(new Date(), 365));
     const lessonsForClass = getLessonsForClass(activePlan, selectedClassTab, activePlan.lessons);
     const sem2 = (cls.semesterSchedules || []).find(ss => ss.semester === 2);
-    const startDate = activePlan.startDate || (selectedSemester === 2 ? sem2?.startDate : undefined) || cls.startDate;
-    const effectiveCls = { ...cls, startDate };
+    const semesterStart = selectedSemester === 2 ? (sem2?.startDate || cls.startDate) : cls.startDate;
+    // 이 계획서가 적용되는 구간 [start, endExclusive) 안에서만 예정 일정 계산
+    const segStart = activePlan.startDate || semesterStart;
+    const effectiveCls = { ...cls, startDate: segStart };
     const scheduled = generateClassLessonSchedule(
-      lessonsForClass, effectiveCls, holidays, events, endDate
+      lessonsForClass, effectiveCls, holidays, events, endDate, segStart, activePlanRange.endExclusive
     );
     const map = new Map<number, { date: string; period: number }>();
     scheduled.filter(s => s.type === 'lesson' && s.lesson).forEach(s => {
       if (!map.has(s.lesson!.order)) map.set(s.lesson!.order, { date: s.date, period: s.period });
     });
     return map;
-  }, [activePlan, selectedClassTab, selectedSemester, classes, holidays, events]);
+  }, [activePlan, activePlanRange, selectedClassTab, selectedSemester, classes, holidays, events]);
 
   // 기본 계획은 모든 학급에 자동 적용 — 학급별 탭에 전체 학급 노출
   const tabClasses = classes;
@@ -561,9 +652,9 @@ function LessonPlanPage() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">수업 계획서</h1>
-            <p className="text-gray-500 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">학기별 기본 수업계획은 모든 학급에 자동 적용되며, 학급별 탭에서 개별 수정할 수 있습니다.</p>
+            <p className="text-gray-500 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">한 학기 안에서도 기간별로 여러 계획서를 적용할 수 있습니다. 각 계획서는 모든 학급에 자동 적용되며 학급별 탭에서 개별 수정할 수 있습니다.</p>
           </div>
-          <div className="flex items-center gap-2 w-full md:w-auto">
+          <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
             <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 rounded-xl px-2 py-1 shrink-0">
               <input type="number" min={1} max={50} value={addCount} onChange={e => setAddCount(Number(e.target.value))} aria-label="추가할 차시 수" className="w-12 bg-transparent text-center text-sm font-bold text-gray-800 dark:text-white outline-none" />
               <span className="text-xs font-bold text-slate-400">개</span>
@@ -577,23 +668,49 @@ function LessonPlanPage() {
                 <button onClick={handleSaveAll} className="flex-1 md:flex-none bg-indigo-600 dark:bg-indigo-500 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-sm transition-colors">저장</button>
               </>
             ) : (
-              <button onClick={startEditCurrentPlan} className="flex-1 md:flex-none bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-200 px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm whitespace-nowrap">계획서 수정</button>
+              <>
+                <button onClick={startEditCurrentPlan} className="flex-1 md:flex-none bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-slate-200 px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm whitespace-nowrap">계획서 수정</button>
+                <button onClick={handleAddPlan} className="flex-1 md:flex-none bg-violet-600 dark:bg-violet-500 text-white px-5 py-3 md:py-2.5 rounded-xl text-sm font-bold hover:bg-violet-700 shadow-sm transition-colors whitespace-nowrap">+ 계획서 추가</button>
+              </>
             )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 shrink-0">학기:</span>
-          <div className="flex gap-1.5 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl">
-            {([1, 2] as const).map(sem => (
-              <button
-                key={sem}
-                onClick={() => { setSelectedSemester(sem); setIsEditMode(false); setSelectedClassTab(null); }}
-                className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-colors ${selectedSemester === sem ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-300' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
-              >
-                {sem}학기
-              </button>
-            ))}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 shrink-0">학기:</span>
+            <div className="flex gap-1.5 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl">
+              {([1, 2] as const).map(sem => (
+                <button
+                  key={sem}
+                  onClick={() => { setSelectedSemester(sem); setIsEditMode(false); setSelectedClassTab(null); }}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-colors ${selectedSemester === sem ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-300' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                >
+                  {sem}학기
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 기간별 계획서 선택 카드 */}
+          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+            {semesterPlans.map((plan, idx) => {
+              const isSel = plan.id === activePlan.id;
+              const nextStart = semesterPlans.find(p => (p.startDate || '') > (plan.startDate || '') && p.id !== plan.id)?.startDate;
+              const rangeText = plan.startDate
+                ? `${plan.startDate} ~ ${nextStart ? `${nextStart} 전` : '학기말'}`
+                : (nextStart ? `학기 시작 ~ ${nextStart} 전` : '학기 전체');
+              return (
+                <button key={plan.id} onClick={() => handleSelectPlan(plan.id)}
+                  className={`shrink-0 min-w-[180px] text-left p-3 rounded-xl border transition-all ${isSel ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-300 dark:border-indigo-600 shadow-sm' : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800'}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`text-sm font-black truncate ${isSel ? 'text-indigo-800 dark:text-indigo-200' : 'text-slate-700 dark:text-slate-200'}`}>{plan.name}</span>
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 shrink-0">{plan.lessons.length}차시</span>
+                  </div>
+                  <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mt-1 truncate">{idx === 0 && !plan.startDate ? '기본' : `구간 ${idx + 1}`} · {rangeText}</div>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -603,14 +720,22 @@ function LessonPlanPage() {
         {activePlan && (
           <section className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 p-4 md:p-5">
             {isEditMode ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">수업계획서 이름</label>
-                  <input value={editPlanName} onChange={e => setEditPlanName(e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="예: 2학년 정규 수업" />
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">수업계획서 이름</label>
+                    <input value={editPlanName} onChange={e => setEditPlanName(e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="예: 1학기말 수업 계획" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">적용 시작일 <span className="font-normal text-slate-400">(미설정 시 학기 시작부터)</span></label>
+                    <input type="date" value={editStartDate} onChange={e => setEditStartDate(e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-xl text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">수업 시작일 <span className="font-normal text-slate-400">(선택 — 미설정 시 학급 시작일 사용)</span></label>
-                  <input type="date" value={editStartDate} onChange={e => setEditStartDate(e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-xl text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <div className="flex justify-between items-center">
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">이 시작일부터 다음 계획서 시작 전까지 적용됩니다. (기간은 겹치지 않습니다)</p>
+                  {semesterPlans.length > 1 && (
+                    <button onClick={handleDeletePlan} className="px-3 py-1.5 rounded-lg text-xs font-bold text-rose-500 border border-rose-200 dark:border-rose-800/60 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors shrink-0">이 계획서 삭제</button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -618,7 +743,9 @@ function LessonPlanPage() {
                 <div>
                   <h2 className="text-base font-black text-slate-900 dark:text-white">{activePlan.name}</h2>
                   <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1">모든 학급에 자동 적용 · {activePlan.lessons.length}차시</p>
-                  {activePlan.startDate && <p className="text-xs font-bold text-indigo-500 dark:text-indigo-400 mt-0.5">수업 시작일: {activePlan.startDate}</p>}
+                  <p className="text-xs font-bold text-indigo-500 dark:text-indigo-400 mt-0.5">
+                    적용 기간: {activePlan.startDate || '학기 시작'} ~ {activePlanRange.endExclusive ? `${activePlanRange.endExclusive} 전` : '학기말'}
+                  </p>
                 </div>
                 <div className="text-xs font-bold text-slate-400 dark:text-slate-500">학급별 탭에서 개별 차시를 수정할 수 있습니다.</div>
               </div>
@@ -1116,7 +1243,7 @@ function ScoreLogTab({
   const colorStyle = activeClass ? COLOR_MAP[activeClass.color] : COLOR_MAP['blue'];
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden p-5 md:p-6">
+    <div className="flex-1 flex flex-col md:overflow-hidden p-5 md:p-6">
       {/* 헤더 */}
       <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200 dark:border-slate-700 shrink-0 gap-3 flex-wrap">
         <span className="text-sm font-bold text-slate-500 dark:text-slate-400">
@@ -1184,7 +1311,7 @@ function ScoreLogTab({
       )}
 
       {/* 이력 목록 */}
-      <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+      <div className="flex-1 md:overflow-y-auto space-y-2 md:pr-1">
         {classScoreLogs.length > 0 ? classScoreLogs.map(log => {
           const isPlus = log.amount > 0;
           const isSelected = selectedIds.has(log.id);
@@ -1508,7 +1635,7 @@ function RecordsPage() {
             </div>
 
             {/* 오른쪽: 탭 (기록 내역 / 점수 이력) */}
-            <div className="flex-1 flex flex-col bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-3xl shadow-sm border border-white dark:border-slate-700 overflow-hidden min-h-[400px] md:min-h-0 order-2">
+            <div className="flex-1 flex flex-col bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-3xl shadow-sm border border-white dark:border-slate-700 md:overflow-hidden md:min-h-0 order-2">
               {/* 탭 헤더 */}
               <div className="flex border-b border-gray-200 dark:border-slate-700 shrink-0">
                 <button
@@ -1526,7 +1653,7 @@ function RecordsPage() {
               </div>
 
               {activeTab === 'records' ? (
-                <div className="flex-1 flex flex-col overflow-hidden p-5 md:p-6">
+                <div className="flex-1 flex flex-col md:overflow-hidden p-5 md:p-6">
                   <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-4 pb-4 border-b border-gray-200 dark:border-slate-700 gap-3 shrink-0">
                     <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{classRecords.length}개의 기록</span>
                     <div className="flex items-center gap-2 bg-white/80 dark:bg-slate-900/80 p-2 rounded-xl border border-gray-200 dark:border-slate-600 shadow-sm overflow-x-auto max-w-full scrollbar-hide">
@@ -1536,7 +1663,7 @@ function RecordsPage() {
                       <button onClick={handleExportCSV} className="bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-colors ml-1 shrink-0">Excel 저장</button>
                     </div>
                   </div>
-                  <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+                  <div className="flex-1 md:overflow-y-auto md:pr-2 space-y-4">
                     {classRecords.length > 0 ? classRecords.map(rec => (
                       <div key={rec.id} className={`p-5 rounded-2xl shadow-sm border group relative transition-colors ${rec.important ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-700/50' : 'bg-white dark:bg-slate-900/50 border-slate-100 dark:border-slate-700/50'}`}>
                         <div className="flex justify-between items-start mb-3">
@@ -1780,12 +1907,13 @@ function ManagePage() {
       // 2학기로 판정됐지만 2학기 기본 계획이 없으면 1학기 계획을 그대로 사용
       const hasSem2Plan = !!getBasePlanForSemester(plans, 2);
       const effectiveSemester: 1 | 2 = semester === 2 && hasSem2Plan ? 2 : 1;
-      const basePlan = getBasePlanForSemester(plans, effectiveSemester) || getBasePlanForSemester(plans, 1) || plans[0];
-      const clsLessons = getLessonsForClass(basePlan, cls.classId, lessons);
-      // 학기 시작일: 계획서 시작일 > 2학기 시간표 시작일 > 학급 시작일
-      const startDate = basePlan?.startDate || (effectiveSemester === 2 ? sem2Schedule?.startDate : undefined) || cls.startDate;
-      const effectiveCls = { ...cls, startDate };
-      const clsSchedule = generateClassLessonSchedule(clsLessons, effectiveCls, holidays, events, weekEndDateStr);
+      // 2학기 시간표 시작일을 학급 시작일에 반영(시간표 전환용)
+      const effectiveCls = effectiveSemester === 2 && sem2Schedule?.startDate ? { ...cls, startDate: sem2Schedule.startDate } : cls;
+      // 기간별 계획서를 적용. 계획서가 전혀 없으면 레거시 lessons 폴백.
+      let clsSchedule = generateSegmentedSchedule(plans, effectiveSemester, effectiveCls, holidays, events, weekEndDateStr);
+      if (clsSchedule.length === 0 && getPlanSegmentsForClass(plans, effectiveSemester, effectiveCls).length === 0) {
+        clsSchedule = generateClassLessonSchedule(lessons, effectiveCls, holidays, events, weekEndDateStr);
+      }
       clsSchedule.forEach(item => allItems.push({ item, classInfo: cls }));
     });
     return allItems;
@@ -2687,7 +2815,33 @@ function SettingsPage() {
   const handleAddEvent = async (newEvent: ClassEvent) => { try { await updateEvents([...events, newEvent]); setEventModalOpen(false); addToast('일정이 등록되었습니다.', 'success'); } catch { addToast('일정 등록에 실패했습니다.'); } };
   const handleDeleteEvent = async (id: string) => { try { await updateEvents(events.filter(ev => ev.id !== id)); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
   const handleAddHoliday = async (newHolidays: Holiday[]) => { try { await updateHolidays([...holidays, ...newHolidays].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())); setHolidayModalOpen(false); addToast('전체 일정이 등록되었습니다.', 'success'); } catch { addToast('일정 등록에 실패했습니다.'); } };
-  const handleDeleteHoliday = async (idOrDate: string) => { try { await updateHolidays(holidays.filter(h => (h.id || h.date) !== idOrDate)); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
+  const handleDeleteHolidayKeys = async (keys: Set<string>) => { try { await updateHolidays(holidays.filter(h => !keys.has(h.id || h.date))); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
+
+  // 공통 일정 그룹화: 같은 제목+유형끼리 묶어 날짜 범위/교시/학급을 정리해 보여준다.
+  const holidayGroups = useMemo(() => {
+    const groups = new Map<string, { title: string; isHoliday: boolean; dates: Set<string>; keys: Set<string>; slots: Map<string, { periods: number[]; classIds: string[] }> }>();
+    for (const h of holidays) {
+      const isHol = h.isHoliday !== false;
+      const gkey = `${h.title}__${isHol ? 1 : 0}`;
+      if (!groups.has(gkey)) groups.set(gkey, { title: h.title, isHoliday: isHol, dates: new Set(), keys: new Set(), slots: new Map() });
+      const g = groups.get(gkey)!;
+      g.dates.add(h.date);
+      g.keys.add(h.id || h.date);
+      const periods = h.periods || [];
+      const classIds = h.classIds || [];
+      if (periods.length > 0 || classIds.length > 0) {
+        g.slots.set(`${periods.join(',')}|${classIds.join(',')}`, { periods, classIds });
+      }
+    }
+    return Array.from(groups.values())
+      .map(g => {
+        const dates = Array.from(g.dates).sort();
+        return { ...g, sortedDates: dates, first: dates[0], last: dates[dates.length - 1], slotList: Array.from(g.slots.values()) };
+      })
+      .sort((a, b) => a.first.localeCompare(b.first));
+  }, [holidays]);
+
+  const fmtMD = (d: string) => { const dt = dateUtils.parseDate(d); const DAY = ['일','월','화','수','목','금','토']; return `${dt.getMonth() + 1}/${dt.getDate()}(${DAY[dt.getDay()]})`; };
 
   const renderColorPicker = (selCol: ClassColor, onSel: (c: ClassColor) => void) => (
     <div className="flex gap-2">
@@ -2878,25 +3032,40 @@ function SettingsPage() {
             <h2 className="text-sm font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2"><span className="w-1.5 h-4 bg-rose-400 rounded-full"></span>학교 공통 일정 (전체 학급)</h2>
             <button onClick={() => setHolidayModalOpen(true)} className="bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-rose-200">+ 공통 일정 등록</button>
           </div>
-          <div className="flex flex-col sm:flex-row flex-wrap gap-3 text-sm">
-            {holidays.length > 0 ? holidays.map((h, i) => (
-              <div key={h.id || i} className="flex gap-3 items-center bg-white/80 dark:bg-slate-800/80 py-2.5 px-4 rounded-xl border border-rose-100 dark:border-rose-900/50 shadow-sm w-full sm:w-auto justify-between sm:justify-start">
-                <div className="flex items-center gap-3">
-                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold ${h.isHoliday !== false ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'}`}>{h.isHoliday !== false ? '휴강' : '일정'}</span>
-                  <span className="font-bold text-rose-900 dark:text-rose-200 text-xs md:text-sm">{h.date}</span>
-                  <span className="font-medium text-rose-700 dark:text-rose-300 text-xs md:text-sm">{h.title}</span>
-                  {h.periods && h.periods.length > 0 && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">{h.periods.join(',')}교시</span>
-                  )}
-                  {h.classIds && h.classIds.length > 0 && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300 truncate max-w-[160px]">
-                      {h.classIds.map(id => classes.find(c => c.classId === id)?.className).filter(Boolean).join(', ')}
-                    </span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+            {holidayGroups.length > 0 ? holidayGroups.map((g, i) => {
+              const dateLabel = g.first === g.last ? fmtMD(g.first) : `${fmtMD(g.first)} ~ ${fmtMD(g.last)}`;
+              const dayCount = g.sortedDates.length;
+              return (
+                <div key={i} className="flex flex-col gap-2 bg-white/90 dark:bg-slate-800/80 py-3 px-4 rounded-2xl border border-rose-100 dark:border-rose-900/50 shadow-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-md font-bold ${g.isHoliday ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'}`}>{g.isHoliday ? '휴강' : '일정'}</span>
+                      <span className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate">{g.title}</span>
+                    </div>
+                    <button aria-label="이 일정 삭제" onClick={() => handleDeleteHolidayKeys(g.keys)} className="shrink-0 text-sm text-gray-400 hover:text-red-500 font-black p-1">✕</button>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap text-xs">
+                    <span className="font-bold text-rose-700 dark:text-rose-300">📅 {dateLabel}</span>
+                    {dayCount > 1 && <span className="text-slate-400 dark:text-slate-500 font-bold">({dayCount}일간)</span>}
+                  </div>
+                  {g.slotList.length > 0 ? (
+                    <div className="flex flex-col gap-1.5">
+                      {g.slotList.map((s, si) => (
+                        <div key={si} className="flex items-center gap-1.5 flex-wrap">
+                          {s.periods.length > 0 && <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">{s.periods.join(',')}교시</span>}
+                          <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
+                            {s.classIds.length > 0 ? s.classIds.map(id => classes.find(c => c.classId === id)?.className).filter(Boolean).join(', ') : '전체 학급'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 w-fit">전체 학급 · 하루 종일</span>
                   )}
                 </div>
-                <button aria-label="전체 일정 삭제" onClick={() => handleDeleteHoliday(h.id || h.date)} className="text-sm text-gray-400 hover:text-red-500 font-black p-1">✕</button>
-              </div>
-            )) : (
+              );
+            }) : (
               <span className="text-slate-400 dark:text-slate-500 text-sm font-bold p-2">등록된 전체 일정이 없습니다.</span>
             )}
           </div>
