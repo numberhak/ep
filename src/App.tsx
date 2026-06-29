@@ -204,9 +204,22 @@ function generateClassLessonSchedule(
   return scheduledItems;
 }
 
-// 학기별 기본 수업계획서 (첫 번째 해당 학기 계획서가 기본 계획) — 모든 학급에 자동 적용
+// 학기별 기본 수업계획서 — 모든 학급에 자동 적용.
+// 과거 데이터로 같은 학기 계획서가 여러 개일 수 있으므로, 차시가 가장 많은 계획을 기준으로
+// 병합하고 학급별 override(classLessonPlans)는 모두 합쳐서 하나의 기본 계획으로 반환한다.
 function getBasePlanForSemester(plans: LessonPlan[], semester: 1 | 2): LessonPlan | undefined {
-  return plans.find(p => (p.semester ?? 1) === semester);
+  const matching = plans.filter(p => (p.semester ?? 1) === semester);
+  if (matching.length === 0) return undefined;
+  if (matching.length === 1) return matching[0];
+  const primary = matching.reduce((a, b) => (b.lessons?.length || 0) > (a.lessons?.length || 0) ? b : a, matching[0]);
+  const mergedOverrides: ClassLessonPlan[] = [];
+  const seen = new Set<string>();
+  for (const p of matching) {
+    for (const clp of (p.classLessonPlans || [])) {
+      if (!seen.has(clp.classId)) { seen.add(clp.classId); mergedOverrides.push(clp); }
+    }
+  }
+  return { ...primary, classLessonPlans: mergedOverrides };
 }
 // 특정 학급에 적용될 차시 목록 (학급별 override 우선, 없으면 기본 계획)
 function getLessonsForClass(plan: LessonPlan | undefined, classId: string, fallback: Lesson[]): Lesson[] {
@@ -363,12 +376,12 @@ function LessonPlanPage() {
     }
   };
 
-  // 기본 계획서 저장 (없으면 새로 추가, 있으면 갱신). 1학기 기본 계획은 레거시 lessons에도 반영.
+  // 기본 계획서 저장 — 같은 학기 계획서는 하나로 통합(과거 분산 데이터 정리), 다른 학기는 유지.
+  // 1학기 기본 계획은 레거시 lessons에도 반영.
   const persistBasePlan = async (updatedPlan: LessonPlan) => {
-    const exists = fallbackPlans.some(p => p.id === updatedPlan.id);
-    const nextPlans = exists
-      ? fallbackPlans.map(p => p.id === updatedPlan.id ? updatedPlan : p)
-      : [...fallbackPlans, updatedPlan];
+    const others = fallbackPlans.filter(p => (p.semester ?? 1) !== selectedSemester);
+    const nextPlans = [...others, { ...updatedPlan, semester: selectedSemester }]
+      .sort((a, b) => (a.semester ?? 1) - (b.semester ?? 1));
     await updateLessonPlans(nextPlans);
     const sem1Base = getBasePlanForSemester(nextPlans, 1);
     if (sem1Base) await updateLessons(sem1Base.lessons);
@@ -1760,12 +1773,17 @@ function ManagePage() {
 
     targetClasses.forEach(cls => {
       // 보고 있는 주가 해당 학급의 2학기 시작일 이후면 2학기 기본 계획 사용
+      // (2학기 시작일이 비어있으면 무시 — 빈 문자열 비교로 잘못 2학기가 되는 것 방지)
       const sem2Schedule = (cls.semesterSchedules || []).find(ss => ss.semester === 2);
-      const semester: 1 | 2 = sem2Schedule && weekStartStr >= sem2Schedule.startDate ? 2 : 1;
-      const basePlan = getBasePlanForSemester(plans, semester) || getBasePlanForSemester(plans, 1) || plans[0];
+      const hasSem2 = !!(sem2Schedule && sem2Schedule.startDate);
+      const semester: 1 | 2 = hasSem2 && weekStartStr >= sem2Schedule!.startDate ? 2 : 1;
+      // 2학기로 판정됐지만 2학기 기본 계획이 없으면 1학기 계획을 그대로 사용
+      const hasSem2Plan = !!getBasePlanForSemester(plans, 2);
+      const effectiveSemester: 1 | 2 = semester === 2 && hasSem2Plan ? 2 : 1;
+      const basePlan = getBasePlanForSemester(plans, effectiveSemester) || getBasePlanForSemester(plans, 1) || plans[0];
       const clsLessons = getLessonsForClass(basePlan, cls.classId, lessons);
       // 학기 시작일: 계획서 시작일 > 2학기 시간표 시작일 > 학급 시작일
-      const startDate = basePlan?.startDate || (semester === 2 ? sem2Schedule?.startDate : undefined) || cls.startDate;
+      const startDate = basePlan?.startDate || (effectiveSemester === 2 ? sem2Schedule?.startDate : undefined) || cls.startDate;
       const effectiveCls = { ...cls, startDate };
       const clsSchedule = generateClassLessonSchedule(clsLessons, effectiveCls, holidays, events, weekEndDateStr);
       clsSchedule.forEach(item => allItems.push({ item, classInfo: cls }));
