@@ -2025,8 +2025,13 @@ function ManagePage() {
             {daysInWeek.map((date, i) => {
               const dateStr = dateUtils.formatDate(date);
               const isToday = dateStr === todayStr;
-              const dayHolidays = holidays.filter(h => h.date === dateStr && h.isHoliday !== false);
-              const dayEvents = holidays.filter(h => h.date === dateStr && h.isHoliday === false);
+              // 같은 날짜·제목은 1개만 표시 (교시별로 여러 건 등록돼도 배너 하나)
+              const dedupeByTitle = (list: Holiday[]) => {
+                const seen = new Set<string>();
+                return list.filter(h => { if (seen.has(h.title)) return false; seen.add(h.title); return true; });
+              };
+              const dayHolidays = dedupeByTitle(holidays.filter(h => h.date === dateStr && h.isHoliday !== false));
+              const dayEvents = dedupeByTitle(holidays.filter(h => h.date === dateStr && h.isHoliday === false));
               const isHolidayDay = dayHolidays.length > 0;
               const dayTasksForCell = tasks.filter(t => {
                 if (t.completed || !t.date) return false;
@@ -2568,14 +2573,16 @@ function EventModal({ classId, className, onClose, onAdd }: EventModalProps) {
 
 // 공통 학급 일정 기간 등록 및 수업 연기
 interface HolidaySlotRow { periods: number[]; classIds: string[]; }
-interface HolidayModalProps { onClose: () => void; onAdd: (holidays: Holiday[]) => void; classes: ClassSchedule[]; }
-function HolidayModal({ onClose, onAdd, classes }: HolidayModalProps) {
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [newTitle, setNewTitle] = useState('');
-  const [isHolidayType, setIsHolidayType] = useState(true);
-  const [mode, setMode] = useState<'simple' | 'slots'>('simple');
-  const [slots, setSlots] = useState<HolidaySlotRow[]>([{ periods: [], classIds: [] }]);
+interface HolidayModalInitial { startDate: string; endDate: string; title: string; isHoliday: boolean; mode: 'simple' | 'slots'; slots: HolidaySlotRow[]; }
+interface HolidayModalProps { onClose: () => void; onAdd: (holidays: Holiday[]) => void; classes: ClassSchedule[]; initial?: HolidayModalInitial; }
+function HolidayModal({ onClose, onAdd, classes, initial }: HolidayModalProps) {
+  const isEdit = !!initial;
+  const [startDate, setStartDate] = useState(initial?.startDate || '');
+  const [endDate, setEndDate] = useState(initial?.endDate || '');
+  const [newTitle, setNewTitle] = useState(initial?.title || '');
+  const [isHolidayType, setIsHolidayType] = useState(initial ? initial.isHoliday : true);
+  const [mode, setMode] = useState<'simple' | 'slots'>(initial?.mode || 'simple');
+  const [slots, setSlots] = useState<HolidaySlotRow[]>(initial?.slots && initial.slots.length > 0 ? initial.slots : [{ periods: [], classIds: [] }]);
   const [error, setError] = useState('');
 
   const toggleSlotPeriod = (slotIdx: number, p: number) => {
@@ -2626,7 +2633,7 @@ function HolidayModal({ onClose, onAdd, classes }: HolidayModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 dark:bg-gray-900/70 backdrop-blur-sm">
       <div className="bg-white dark:bg-slate-800 w-full max-w-lg rounded-3xl shadow-xl p-6 md:p-8 animate-in zoom-in-95 border border-slate-100 dark:border-slate-700 max-h-[90vh] overflow-y-auto">
-        <h3 className="text-xl font-bold mb-1 text-gray-900 dark:text-white">학교 공통 일정 등록</h3>
+        <h3 className="text-xl font-bold mb-1 text-gray-900 dark:text-white">{isEdit ? '학교 공통 일정 수정' : '학교 공통 일정 등록'}</h3>
         <p className="text-rose-600 dark:text-rose-400 font-bold mb-5 text-sm">전체 학급에 공통 적용 (학급/교시 지정 가능)</p>
         {error && <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm rounded-lg font-bold">{error}</div>}
         <div className="space-y-4 text-sm">
@@ -2723,6 +2730,7 @@ function SettingsPage() {
   const [isClassManageOpen, setClassManageOpen] = useState(false);
   const [isEventModalOpen, setEventModalOpen] = useState(false);
   const [isHolidayModalOpen, setHolidayModalOpen] = useState(false);
+  const [editingHoliday, setEditingHoliday] = useState<{ initial: HolidayModalInitial; keys: Set<string> } | null>(null);
   const [classToDelete, setClassToDelete] = useState<ClassSchedule | null>(null);
 
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
@@ -2814,7 +2822,31 @@ function SettingsPage() {
 
   const handleAddEvent = async (newEvent: ClassEvent) => { try { await updateEvents([...events, newEvent]); setEventModalOpen(false); addToast('일정이 등록되었습니다.', 'success'); } catch { addToast('일정 등록에 실패했습니다.'); } };
   const handleDeleteEvent = async (id: string) => { try { await updateEvents(events.filter(ev => ev.id !== id)); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
-  const handleAddHoliday = async (newHolidays: Holiday[]) => { try { await updateHolidays([...holidays, ...newHolidays].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())); setHolidayModalOpen(false); addToast('전체 일정이 등록되었습니다.', 'success'); } catch { addToast('일정 등록에 실패했습니다.'); } };
+  const handleAddHoliday = async (newHolidays: Holiday[]) => {
+    // 수정 모드면 기존 그룹의 항목들을 먼저 제거하고 새로 등록
+    const removeKeys = editingHoliday?.keys;
+    const base = removeKeys ? holidays.filter(h => !removeKeys.has(h.id || h.date)) : holidays;
+    try {
+      await updateHolidays([...base, ...newHolidays].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
+      setHolidayModalOpen(false);
+      setEditingHoliday(null);
+      addToast(removeKeys ? '일정이 수정되었습니다.' : '전체 일정이 등록되었습니다.', 'success');
+    } catch { addToast(removeKeys ? '일정 수정에 실패했습니다.' : '일정 등록에 실패했습니다.'); }
+  };
+
+  // 그룹 카드를 수정 모달로 열기
+  const openEditHoliday = (g: { title: string; isHoliday: boolean; first: string; last: string; slotList: { periods: number[]; classIds: string[] }[]; keys: Set<string> }) => {
+    const initial: HolidayModalInitial = {
+      startDate: g.first,
+      endDate: g.last,
+      title: g.title,
+      isHoliday: g.isHoliday,
+      mode: g.slotList.length > 0 ? 'slots' : 'simple',
+      slots: g.slotList.length > 0 ? g.slotList.map(s => ({ periods: [...s.periods], classIds: [...s.classIds] })) : [{ periods: [], classIds: [] }],
+    };
+    setEditingHoliday({ initial, keys: g.keys });
+    setHolidayModalOpen(true);
+  };
   const handleDeleteHolidayKeys = async (keys: Set<string>) => { try { await updateHolidays(holidays.filter(h => !keys.has(h.id || h.date))); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
 
   // 공통 일정 그룹화: 같은 제목+유형끼리 묶어 날짜 범위/교시/학급을 정리해 보여준다.
@@ -3030,7 +3062,7 @@ function SettingsPage() {
         <section className="bg-rose-50/50 dark:bg-rose-900/10 p-5 md:p-6 rounded-3xl border border-rose-100 dark:border-rose-900/30 shrink-0">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
             <h2 className="text-sm font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2"><span className="w-1.5 h-4 bg-rose-400 rounded-full"></span>학교 공통 일정 (전체 학급)</h2>
-            <button onClick={() => setHolidayModalOpen(true)} className="bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-rose-200">+ 공통 일정 등록</button>
+            <button onClick={() => { setEditingHoliday(null); setHolidayModalOpen(true); }} className="bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-rose-200">+ 공통 일정 등록</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
             {holidayGroups.length > 0 ? holidayGroups.map((g, i) => {
@@ -3043,7 +3075,10 @@ function SettingsPage() {
                       <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-md font-bold ${g.isHoliday ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'}`}>{g.isHoliday ? '휴강' : '일정'}</span>
                       <span className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate">{g.title}</span>
                     </div>
-                    <button aria-label="이 일정 삭제" onClick={() => handleDeleteHolidayKeys(g.keys)} className="shrink-0 text-sm text-gray-400 hover:text-red-500 font-black p-1">✕</button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button aria-label="이 일정 수정" onClick={() => openEditHoliday(g)} className="text-xs text-gray-400 hover:text-indigo-500 font-bold p-1">✎</button>
+                      <button aria-label="이 일정 삭제" onClick={() => handleDeleteHolidayKeys(g.keys)} className="text-sm text-gray-400 hover:text-red-500 font-black p-1">✕</button>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap text-xs">
                     <span className="font-bold text-rose-700 dark:text-rose-300">📅 {dateLabel}</span>
@@ -3083,7 +3118,7 @@ function SettingsPage() {
       {isClassModalOpen && <ClassModal onClose={() => setClassModalOpen(false)} onAdd={handleAddClass} renderColorPicker={renderColorPicker} dayNames={dayNames} />}
       {isClassManageOpen && <ClassManageModal classes={classes} onClose={() => setClassManageOpen(false)} onEdit={(cls) => { setClassManageOpen(false); setSelectedTabClassId(cls.classId); startEditClass(cls); }} onDelete={(cls) => setClassToDelete(cls)} />}
       {isEventModalOpen && activeClass && <EventModal classId={activeClass.classId} className={activeClass.className} onClose={() => setEventModalOpen(false)} onAdd={handleAddEvent} />}
-      {isHolidayModalOpen && <HolidayModal onClose={() => setHolidayModalOpen(false)} onAdd={handleAddHoliday} classes={classes} />}
+      {isHolidayModalOpen && <HolidayModal onClose={() => { setHolidayModalOpen(false); setEditingHoliday(null); }} onAdd={handleAddHoliday} classes={classes} initial={editingHoliday?.initial} />}
     </div>
   );
 }
