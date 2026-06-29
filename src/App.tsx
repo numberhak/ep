@@ -40,11 +40,11 @@ const loadFromLocal = (key: string, fallback: any) => {
 // ==========================================
 export interface Lesson { id: string; order: number; title: string; memo: string; }
 export interface ClassLessonPlan { classId: string; lessons: Lesson[]; }
-export interface LessonPlan { id: string; name: string; semester?: 1 | 2; classIds: string[]; lessons: Lesson[]; classLessonPlans?: ClassLessonPlan[]; }
+export interface LessonPlan { id: string; name: string; semester?: 1 | 2; startDate?: string; classIds: string[]; lessons: Lesson[]; classLessonPlans?: ClassLessonPlan[]; }
 export interface WeeklySlot { dayOfWeek: number; period: number; }
 export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan';
 export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; classScore?: number; groupScores?: number[]; }
-export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; periods?: number[]; }
+export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; periods?: number[]; classIds?: string[]; }
 export interface ClassEvent { id: string; classId: string; date: string; period: number; title: string; type: 'exception' | 'extra' | 'replace'; }
 export interface ClassRecord { id: string; classId: string; date: string; content: string; important?: boolean; }
 export interface UserProfile { name: string; subject: string; }
@@ -108,9 +108,10 @@ function generateClassLessonSchedule(
   viewEndDateStr: string
 ): ScheduledItem[] {
   const sortedLessons = [...lessons].sort((a, b) => a.order - b.order);
-  const allDayHolidaySet = new Set(holidays.filter(h => !h.periods || h.periods.length === 0).map(h => h.date));
+  const relevantHolidays = holidays.filter(h => !h.classIds || h.classIds.length === 0 || h.classIds.includes(schedule.classId));
+  const allDayHolidaySet = new Set(relevantHolidays.filter(h => !h.periods || h.periods.length === 0).map(h => h.date));
   const periodHolidayMap = new Map<string, Set<number>>();
-  holidays.filter(h => h.periods && h.periods.length > 0).forEach(h => {
+  relevantHolidays.filter(h => h.periods && h.periods.length > 0).forEach(h => {
     if (!periodHolidayMap.has(h.date)) periodHolidayMap.set(h.date, new Set());
     h.periods!.forEach(p => periodHolidayMap.get(h.date)!.add(p));
   });
@@ -289,6 +290,7 @@ function LessonPlanPage() {
   const [editPlanName, setEditPlanName] = useState('');
   const [editClassIds, setEditClassIds] = useState<string[]>([]);
   const [editSemester, setEditSemester] = useState<1 | 2>(1);
+  const [editStartDate, setEditStartDate] = useState('');
   const [planToDelete, setPlanToDelete] = useState<LessonPlan | null>(null);
 
   const semesterPlans = fallbackPlans.filter(p => (p.semester ?? 1) === selectedSemester);
@@ -348,6 +350,7 @@ function LessonPlanPage() {
     setEditPlanName(activePlan.name);
     setEditClassIds([...(activePlan.classIds || [])]);
     setEditSemester((activePlan.semester ?? 1) as 1 | 2);
+    setEditStartDate(activePlan.startDate || '');
     setIsEditMode(true);
   };
 
@@ -371,6 +374,7 @@ function LessonPlanPage() {
       setEditPlanName(newPlan.name);
       setEditClassIds([]);
       setEditSemester(selectedSemester);
+      setEditStartDate('');
       setEditData(newPlan.lessons);
       setSelectedClassTab(null);
       setIsEditMode(true);
@@ -407,7 +411,7 @@ function LessonPlanPage() {
         const cleanedClassLessonPlans = (plan.classLessonPlans || []).filter(
           clp => !removedClassIds.includes(clp.classId)
         );
-        return { ...plan, name: editPlanName.trim(), semester: editSemester, classIds: editClassIds, lessons: normalizedLessons, classLessonPlans: cleanedClassLessonPlans };
+        return { ...plan, name: editPlanName.trim(), semester: editSemester, startDate: editStartDate || undefined, classIds: editClassIds, lessons: normalizedLessons, classLessonPlans: cleanedClassLessonPlans };
       }
       return { ...plan, classIds: (plan.classIds || []).filter(id => !selectedClassSet.has(id)) };
     });
@@ -554,8 +558,9 @@ function LessonPlanPage() {
     const endDate = dateUtils.formatDate(dateUtils.addDays(new Date(), 365));
     const classLessonPlan = (activePlan.classLessonPlans || []).find(clp => clp.classId === selectedClassTab);
     const lessonsForClass = classLessonPlan ? classLessonPlan.lessons : activePlan.lessons;
+    const effectiveCls = activePlan.startDate ? { ...cls, startDate: activePlan.startDate } : cls;
     const scheduled = generateClassLessonSchedule(
-      lessonsForClass, cls, holidays, events, endDate
+      lessonsForClass, effectiveCls, holidays, events, endDate
     );
     const map = new Map<number, { date: string; period: number }>();
     scheduled.filter(s => s.type === 'lesson' && s.lesson).forEach(s => {
@@ -659,6 +664,10 @@ function LessonPlanPage() {
                         ))}
                       </div>
                     </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">수업 시작일 <span className="font-normal text-slate-400">(선택 — 미설정 시 학급 시작일 사용)</span></label>
+                      <input type="date" value={editStartDate} onChange={e => setEditStartDate(e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-xl text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">적용 학급</label>
@@ -686,6 +695,7 @@ function LessonPlanPage() {
                 <div>
                   <h2 className="text-base font-black text-slate-900 dark:text-white">{activePlan.name}</h2>
                   <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1">적용 학급: {getAssignedClassNames(activePlan)}</p>
+                  {activePlan.startDate && <p className="text-xs font-bold text-indigo-500 dark:text-indigo-400 mt-0.5">수업 시작일: {activePlan.startDate}</p>}
                 </div>
                 <div className="text-xs font-bold text-slate-400 dark:text-slate-500">미배정 학급은 첫 번째 수업계획서를 기본으로 사용합니다.</div>
               </div>
@@ -1850,7 +1860,8 @@ function ManagePage() {
       const assignedPlan = plans.find(plan => (plan.classIds || []).includes(cls.classId)) || fallbackPlan;
       const classLessonPlan = (assignedPlan?.classLessonPlans || []).find(clp => clp.classId === cls.classId);
       const clsLessons = classLessonPlan ? classLessonPlan.lessons : (assignedPlan?.lessons || lessons);
-      const clsSchedule = generateClassLessonSchedule(clsLessons, cls, holidays, events, weekEndDateStr);
+      const effectiveCls = assignedPlan?.startDate ? { ...cls, startDate: assignedPlan.startDate } : cls;
+      const clsSchedule = generateClassLessonSchedule(clsLessons, effectiveCls, holidays, events, weekEndDateStr);
       clsSchedule.forEach(item => allItems.push({ item, classInfo: cls }));
     });
     return allItems;
@@ -2522,37 +2533,57 @@ function EventModal({ classId, className, onClose, onAdd }: EventModalProps) {
 }
 
 // 공통 학급 일정 기간 등록 및 수업 연기
-interface HolidayModalProps { onClose: () => void; onAdd: (holidays: Holiday[]) => void; }
-function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
+interface HolidaySlotRow { periods: number[]; classIds: string[]; }
+interface HolidayModalProps { onClose: () => void; onAdd: (holidays: Holiday[]) => void; classes: ClassSchedule[]; }
+function HolidayModal({ onClose, onAdd, classes }: HolidayModalProps) {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [newTitle, setNewTitle] = useState('');
   const [isHolidayType, setIsHolidayType] = useState(true);
-  const [allDay, setAllDay] = useState(true);
-  const [selectedPeriods, setSelectedPeriods] = useState<number[]>([]);
+  const [mode, setMode] = useState<'simple' | 'slots'>('simple');
+  const [slots, setSlots] = useState<HolidaySlotRow[]>([{ periods: [], classIds: [] }]);
   const [error, setError] = useState('');
 
-  const togglePeriod = (p: number) => {
-    setSelectedPeriods(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p].sort((a, b) => a - b));
+  const toggleSlotPeriod = (slotIdx: number, p: number) => {
+    setSlots(prev => prev.map((s, i) => i !== slotIdx ? s : {
+      ...s,
+      periods: s.periods.includes(p) ? s.periods.filter(x => x !== p) : [...s.periods, p].sort((a, b) => a - b)
+    }));
   };
+
+  const toggleSlotClass = (slotIdx: number, classId: string) => {
+    setSlots(prev => prev.map((s, i) => i !== slotIdx ? s : {
+      ...s,
+      classIds: s.classIds.includes(classId) ? s.classIds.filter(x => x !== classId) : [...s.classIds, classId]
+    }));
+  };
+
+  const addSlot = () => setSlots(prev => [...prev, { periods: [], classIds: [] }]);
+  const removeSlot = (idx: number) => setSlots(prev => prev.filter((_, i) => i !== idx));
 
   const handleAdd = () => {
     if (!startDate || !endDate || !newTitle.trim()) { setError('날짜와 내용을 입력하세요.'); return; }
-    if (!allDay && selectedPeriods.length === 0) { setError('교시를 1개 이상 선택하세요.'); return; }
     const start = dateUtils.parseDate(startDate);
     const end = dateUtils.parseDate(endDate);
     if (start > end) { setError('종료일이 시작일보다 빠를 수 없습니다.'); return; }
+    if (mode === 'slots' && slots.some(s => s.periods.length === 0)) { setError('각 슬롯에 교시를 1개 이상 선택하세요.'); return; }
 
     const newHolidays: Holiday[] = [];
     let curr = start;
     while (curr <= end) {
-      newHolidays.push({
-        id: `h-${Date.now()}-${Math.random().toString(36).substr(2,9)}`,
-        date: dateUtils.formatDate(curr),
-        title: newTitle,
-        isHoliday: isHolidayType,
-        periods: allDay ? undefined : [...selectedPeriods],
-      });
+      const dateStr = dateUtils.formatDate(curr);
+      if (mode === 'simple') {
+        newHolidays.push({ id: `h-${Date.now()}-${Math.random().toString(36).substr(2,9)}`, date: dateStr, title: newTitle, isHoliday: isHolidayType });
+      } else {
+        slots.forEach(slot => {
+          newHolidays.push({
+            id: `h-${Date.now()}-${Math.random().toString(36).substr(2,9)}`,
+            date: dateStr, title: newTitle, isHoliday: isHolidayType,
+            periods: slot.periods.length > 0 ? [...slot.periods] : undefined,
+            classIds: slot.classIds.length > 0 ? [...slot.classIds] : undefined,
+          });
+        });
+      }
       curr = dateUtils.addDays(curr, 1);
     }
     onAdd(newHolidays);
@@ -2560,9 +2591,9 @@ function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 dark:bg-gray-900/70 backdrop-blur-sm">
-      <div className="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl shadow-xl p-6 md:p-8 animate-in zoom-in-95 border border-slate-100 dark:border-slate-700">
+      <div className="bg-white dark:bg-slate-800 w-full max-w-lg rounded-3xl shadow-xl p-6 md:p-8 animate-in zoom-in-95 border border-slate-100 dark:border-slate-700 max-h-[90vh] overflow-y-auto">
         <h3 className="text-xl font-bold mb-1 text-gray-900 dark:text-white">학교 공통 일정 등록</h3>
-        <p className="text-rose-600 dark:text-rose-400 font-bold mb-5 text-sm">전체 학급에 공통 적용</p>
+        <p className="text-rose-600 dark:text-rose-400 font-bold mb-5 text-sm">전체 학급에 공통 적용 (학급/교시 지정 가능)</p>
         {error && <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm rounded-lg font-bold">{error}</div>}
         <div className="space-y-4 text-sm">
           <div>
@@ -2573,33 +2604,6 @@ function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
             </div>
             <p className="text-[10px] text-gray-500 mt-2 ml-1">* 해당 날짜(또는 교시)의 정규 수업은 다음 차시로 밀립니다.</p>
           </div>
-          <div>
-            <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">적용 범위</label>
-            <div className="flex gap-2 bg-slate-100 dark:bg-slate-900 p-1.5 rounded-xl">
-              <button onClick={() => { setAllDay(true); setSelectedPeriods([]); }} className={`flex-1 py-2.5 rounded-lg font-bold transition-colors ${allDay ? 'bg-white dark:bg-slate-800 shadow-sm text-slate-800 dark:text-white' : 'text-slate-500'}`}>하루 종일</button>
-              <button onClick={() => setAllDay(false)} className={`flex-1 py-2.5 rounded-lg font-bold transition-colors ${!allDay ? 'bg-white dark:bg-slate-800 shadow-sm text-indigo-600 dark:text-indigo-400' : 'text-slate-500'}`}>교시 지정</button>
-            </div>
-          </div>
-          {!allDay && (
-            <div>
-              <label className="block font-bold text-gray-700 dark:text-gray-300 mb-2">교시 선택</label>
-              <div className="flex flex-wrap gap-2">
-                {[1,2,3,4,5,6,7].map(p => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => togglePeriod(p)}
-                    className={`w-10 h-10 rounded-xl text-sm font-bold border transition-colors ${selectedPeriods.includes(p) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'}`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-              {selectedPeriods.length > 0 && (
-                <p className="text-xs text-indigo-600 dark:text-indigo-400 font-bold mt-2">{selectedPeriods.join(', ')}교시 선택됨</p>
-              )}
-            </div>
-          )}
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">시작일</label>
@@ -2610,7 +2614,61 @@ function HolidayModal({ onClose, onAdd }: HolidayModalProps) {
               <input type="date" aria-label="종료일" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
-          <div><label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">일정명</label><input type="text" aria-label="전체 일정 이름" value={newTitle} onChange={e => setNewTitle(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500" placeholder={isHolidayType ? "예: 개교기념일" : "예: 1학기 중간고사"} /></div>
+          <div><label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">일정명</label><input type="text" aria-label="전체 일정 이름" value={newTitle} onChange={e => setNewTitle(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500" placeholder={isHolidayType ? "예: 개교기념일" : "예: 도박예방교육"} /></div>
+
+          <div>
+            <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">적용 방식</label>
+            <div className="flex gap-2 bg-slate-100 dark:bg-slate-900 p-1.5 rounded-xl">
+              <button onClick={() => setMode('simple')} className={`flex-1 py-2.5 rounded-lg font-bold transition-colors ${mode === 'simple' ? 'bg-white dark:bg-slate-800 shadow-sm text-slate-800 dark:text-white' : 'text-slate-500'}`}>전체 학급 하루 종일</button>
+              <button onClick={() => setMode('slots')} className={`flex-1 py-2.5 rounded-lg font-bold transition-colors ${mode === 'slots' ? 'bg-white dark:bg-slate-800 shadow-sm text-indigo-600 dark:text-indigo-400' : 'text-slate-500'}`}>교시 / 학급 지정</button>
+            </div>
+          </div>
+
+          {mode === 'slots' && (
+            <div className="space-y-3">
+              {slots.map((slot, slotIdx) => (
+                <div key={slotIdx} className="border border-indigo-200 dark:border-indigo-800/60 rounded-2xl p-4 space-y-3 bg-indigo-50/40 dark:bg-indigo-900/10">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-black text-indigo-700 dark:text-indigo-300">슬롯 {slotIdx + 1}</span>
+                    {slots.length > 1 && (
+                      <button onClick={() => removeSlot(slotIdx)} className="text-xs font-bold text-rose-500 hover:text-rose-700">삭제</button>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-gray-600 dark:text-gray-400 mb-1.5">교시 <span className="text-rose-500">*</span></p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[1,2,3,4,5,6,7].map(p => (
+                        <button key={p} type="button" onClick={() => toggleSlotPeriod(slotIdx, p)}
+                          className={`w-9 h-9 rounded-lg text-sm font-bold border transition-colors ${slot.periods.includes(p) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:bg-slate-50'}`}>
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                    {slot.periods.length > 0 && <p className="text-[11px] text-indigo-600 dark:text-indigo-400 font-bold mt-1">{slot.periods.join(', ')}교시</p>}
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-gray-600 dark:text-gray-400 mb-1.5">적용 학급 <span className="text-slate-400 font-normal">(미선택 시 전체)</span></p>
+                    {classes.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {classes.map(cls => (
+                          <button key={cls.classId} type="button" onClick={() => toggleSlotClass(slotIdx, cls.classId)}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${slot.classIds.includes(cls.classId) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:bg-slate-50'}`}>
+                            {cls.className}
+                          </button>
+                        ))}
+                      </div>
+                    ) : <span className="text-xs text-slate-400">등록된 학급 없음</span>}
+                    {slot.classIds.length > 0 && (
+                      <p className="text-[11px] text-indigo-600 dark:text-indigo-400 font-bold mt-1">
+                        {slot.classIds.map(id => classes.find(c => c.classId === id)?.className).filter(Boolean).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <button onClick={addSlot} className="w-full py-2.5 rounded-xl border-2 border-dashed border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 text-sm font-bold hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">+ 슬롯 추가</button>
+            </div>
+          )}
         </div>
         <div className="mt-6 flex justify-end gap-2">
           <button onClick={onClose} className="px-5 py-2.5 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200 rounded-xl text-sm font-bold">취소</button>
@@ -2812,6 +2870,11 @@ function SettingsPage() {
                   {h.periods && h.periods.length > 0 && (
                     <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">{h.periods.join(',')}교시</span>
                   )}
+                  {h.classIds && h.classIds.length > 0 && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300 truncate max-w-[160px]">
+                      {h.classIds.map(id => classes.find(c => c.classId === id)?.className).filter(Boolean).join(', ')}
+                    </span>
+                  )}
                 </div>
                 <button aria-label="전체 일정 삭제" onClick={() => handleDeleteHoliday(h.id || h.date)} className="text-sm text-gray-400 hover:text-red-500 font-black p-1">✕</button>
               </div>
@@ -2833,7 +2896,7 @@ function SettingsPage() {
       {isClassModalOpen && <ClassModal onClose={() => setClassModalOpen(false)} onAdd={handleAddClass} renderColorPicker={renderColorPicker} dayNames={dayNames} />}
       {isClassManageOpen && <ClassManageModal classes={classes} onClose={() => setClassManageOpen(false)} onEdit={(cls) => { setClassManageOpen(false); setSelectedTabClassId(cls.classId); startEditClass(cls); }} onDelete={(cls) => setClassToDelete(cls)} />}
       {isEventModalOpen && activeClass && <EventModal classId={activeClass.classId} className={activeClass.className} onClose={() => setEventModalOpen(false)} onAdd={handleAddEvent} />}
-      {isHolidayModalOpen && <HolidayModal onClose={() => setHolidayModalOpen(false)} onAdd={handleAddHoliday} />}
+      {isHolidayModalOpen && <HolidayModal onClose={() => setHolidayModalOpen(false)} onAdd={handleAddHoliday} classes={classes} />}
     </div>
   );
 }
