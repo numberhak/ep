@@ -113,6 +113,27 @@ function normalizeGroupMembers(src?: string[][]): string[][] {
   return out;
 }
 
+// Firestore는 중첩 배열(배열 안의 배열)을 저장하지 못한다.
+// groupMembers(string[][])는 저장 시 맵 배열({ m: string[] }[])로 인코딩하고,
+// 읽어올 때 다시 string[][] 로 디코딩해 우회한다. 로컬(localStorage)에는 원본을 그대로 둔다.
+function encodeClassesForFirestore(classes: any[]): any[] {
+  return (classes || []).map(c =>
+    Array.isArray(c?.groupMembers)
+      ? { ...c, groupMembers: c.groupMembers.map((g: string[]) => ({ m: Array.isArray(g) ? g : [] })) }
+      : c
+  );
+}
+function decodeClassesFromFirestore(raw: any[]): any[] {
+  return (raw || []).map(c => {
+    const gm = c?.groupMembers;
+    // 인코딩된 형태({ m: [...] }[])만 되돌린다. 이미 string[][] 이거나 없으면 그대로 둔다.
+    if (Array.isArray(gm) && gm.length > 0 && gm[0] && !Array.isArray(gm[0]) && typeof gm[0] === 'object') {
+      return { ...c, groupMembers: gm.map((x: any) => (Array.isArray(x?.m) ? x.m : [])) };
+    }
+    return c;
+  });
+}
+
 // ==========================================
 // 2-1. 대한민국 공휴일 자동 등록
 // ------------------------------------------
@@ -1693,12 +1714,12 @@ function GroupScoreCard({ index, score, onUpdate, colorStyle }: {
   const displayScore = Number.isInteger(score) ? score : parseFloat(score.toFixed(2));
 
   return (
-    <div className="bg-white/90 dark:bg-slate-800/90 p-3 rounded-2xl shadow-sm border border-white dark:border-slate-700 flex flex-col gap-2">
-      <div className={`text-xs font-black ${colorStyle.text} opacity-80`}>👥 {index + 1}모둠</div>
-      <div className="text-2xl font-black text-gray-800 dark:text-white leading-none">{displayScore}<span className="text-sm ml-0.5">점</span></div>
-      <div className="flex gap-1.5">
-        <button aria-label={`${index + 1}모둠 1점 차감`} onClick={() => onUpdate(-1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-lg text-sm font-black py-2 transition-colors shadow-sm">-1</button>
-        <button aria-label={`${index + 1}모둠 1점 추가`} onClick={() => onUpdate(1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-lg text-sm font-black py-2 transition-colors shadow-sm">+1</button>
+    <div className="bg-white/90 dark:bg-slate-800/90 p-2 sm:p-3 rounded-xl sm:rounded-2xl shadow-sm border border-white dark:border-slate-700 flex flex-col gap-1.5 sm:gap-2 min-w-0">
+      <div className={`text-[10px] sm:text-xs font-black ${colorStyle.text} opacity-80 truncate`}>👥 {index + 1}모둠</div>
+      <div className="text-lg sm:text-2xl font-black text-gray-800 dark:text-white leading-none">{displayScore}<span className="text-xs sm:text-sm ml-0.5">점</span></div>
+      <div className="flex gap-1 sm:gap-1.5">
+        <button aria-label={`${index + 1}모둠 1점 차감`} onClick={() => onUpdate(-1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-lg text-xs sm:text-sm font-black py-1.5 sm:py-2 transition-colors shadow-sm">-1</button>
+        <button aria-label={`${index + 1}모둠 1점 추가`} onClick={() => onUpdate(1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-lg text-xs sm:text-sm font-black py-1.5 sm:py-2 transition-colors shadow-sm">+1</button>
       </div>
       <div className="flex gap-1">
         <input
@@ -1708,10 +1729,10 @@ function GroupScoreCard({ index, score, onUpdate, colorStyle }: {
           value={customInput}
           onChange={e => setCustomInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleApply()}
-          className="w-full min-w-0 text-xs border border-gray-200 dark:border-slate-600 px-2 py-2 rounded-lg text-center font-bold outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
+          className="w-full min-w-0 text-[11px] sm:text-xs border border-gray-200 dark:border-slate-600 px-1.5 sm:px-2 py-1.5 sm:py-2 rounded-lg text-center font-bold outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
           placeholder="점수"
         />
-        <button aria-label={`${index + 1}모둠 점수 반영`} onClick={handleApply} className="bg-slate-800 dark:bg-indigo-600 text-white text-xs px-2.5 rounded-lg font-bold hover:bg-slate-700 dark:hover:bg-indigo-500 whitespace-nowrap shrink-0">반영</button>
+        <button aria-label={`${index + 1}모둠 점수 반영`} onClick={handleApply} className="bg-slate-800 dark:bg-indigo-600 text-white text-[11px] sm:text-xs px-1.5 sm:px-2.5 rounded-lg font-bold hover:bg-slate-700 dark:hover:bg-indigo-500 whitespace-nowrap shrink-0">반영</button>
       </div>
     </div>
   );
@@ -1735,8 +1756,8 @@ function GroupBoard({ classId, members, groupScores, colorStyle, onUpdateScore, 
 
   const view = isEditing ? draft : normalizeGroupMembers(members);
   const rowCount = Math.max(MIN_GROUP_MEMBERS, ...view.map(g => g.length));
-  const gridTemplate = { gridTemplateColumns: `40px repeat(${GROUP_COUNT}, minmax(148px, 1fr))` };
-  const boardMinWidth = 40 + GROUP_COUNT * 148 + GROUP_COUNT * 8;
+  // 1~5모둠이 화면 폭에 맞춰 한 눈에 들어오도록 5개 열을 균등 분할한다.
+  const gridTemplate = { gridTemplateColumns: `repeat(${GROUP_COUNT}, minmax(0, 1fr))` };
 
   const handleNameChange = (groupIdx: number, memberIdx: number, value: string) => {
     setDraft(prev => prev.map((g, gi) => gi !== groupIdx ? g : g.map((m, mi) => mi === memberIdx ? value : m)));
@@ -1786,11 +1807,10 @@ function GroupBoard({ classId, members, groupScores, colorStyle, onUpdateScore, 
         </div>
       </div>
 
-      <div className="overflow-x-auto scrollbar-hide -mx-1 px-1 pb-1">
-        <div style={{ minWidth: `${boardMinWidth}px` }}>
+      <div>
+        <div>
           {/* 모둠 점수 행 */}
-          <div className="grid gap-2" style={gridTemplate}>
-            <div />
+          <div className="grid gap-1.5 sm:gap-2" style={gridTemplate}>
             {Array.from({ length: GROUP_COUNT }).map((_, gi) => (
               <GroupScoreCard key={gi} index={gi} score={groupScores[gi] ?? 0} onUpdate={amt => onUpdateScore(gi, amt)} colorStyle={colorStyle} />
             ))}
@@ -1798,60 +1818,63 @@ function GroupBoard({ classId, members, groupScores, colorStyle, onUpdateScore, 
 
           {/* 편집 중일 때만: 모둠별 인원 조절 (4~6명) */}
           {isEditing && (
-            <div className="grid gap-2 mt-2" style={gridTemplate}>
-              <div />
+            <div className="grid gap-1.5 sm:gap-2 mt-2" style={gridTemplate}>
               {Array.from({ length: GROUP_COUNT }).map((_, gi) => (
-                <div key={gi} className="flex items-center justify-between gap-1 bg-slate-100 dark:bg-slate-900/60 rounded-lg px-2 py-1.5 border border-slate-200 dark:border-slate-700">
+                <div key={gi} className="flex items-center justify-between gap-1 bg-slate-100 dark:bg-slate-900/60 rounded-lg px-1.5 py-1.5 border border-slate-200 dark:border-slate-700">
                   <button
                     aria-label={`${gi + 1}모둠 인원 줄이기`}
                     onClick={() => removeMember(gi)}
                     disabled={draft[gi].length <= MIN_GROUP_MEMBERS}
-                    className="w-6 h-6 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-500 font-black text-xs disabled:opacity-30"
+                    className="w-5 h-5 sm:w-6 sm:h-6 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-500 font-black text-xs disabled:opacity-30 shrink-0"
                   >−</button>
-                  <span className="text-[11px] font-black text-slate-500 dark:text-slate-400">{draft[gi].length}명</span>
+                  <span className="text-[10px] sm:text-[11px] font-black text-slate-500 dark:text-slate-400 whitespace-nowrap">{draft[gi].length}명</span>
                   <button
                     aria-label={`${gi + 1}모둠 인원 늘리기`}
                     onClick={() => addMember(gi)}
                     disabled={draft[gi].length >= MAX_GROUP_MEMBERS}
-                    className="w-6 h-6 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-500 font-black text-xs disabled:opacity-30"
+                    className="w-5 h-5 sm:w-6 sm:h-6 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-500 font-black text-xs disabled:opacity-30 shrink-0"
                   >＋</button>
                 </div>
               ))}
             </div>
           )}
 
-          {/* 모둠원 행 — 같은 번호는 같은 행 */}
+          {/* 모둠원 행 — 같은 번호는 같은 행. 번호는 각 칸 안에 표시한다. */}
           {Array.from({ length: rowCount }).map((_, ri) => (
-            <div key={ri} className="grid gap-2 mt-2" style={gridTemplate}>
-              <div className="flex items-center justify-center">
-                <span className="w-7 h-7 rounded-full bg-slate-200/80 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-black flex items-center justify-center">{ri + 1}</span>
-              </div>
+            <div key={ri} className="grid gap-1.5 sm:gap-2 mt-1.5 sm:mt-2" style={gridTemplate}>
               {Array.from({ length: GROUP_COUNT }).map((_, gi) => {
                 const group = view[gi];
                 if (ri >= group.length) {
-                  return <div key={gi} className="rounded-xl border border-dashed border-slate-200 dark:border-slate-700/60" />;
+                  return <div key={gi} className="rounded-xl border border-dashed border-slate-200 dark:border-slate-700/60 min-h-[2.25rem]" />;
                 }
                 const name = group[ri];
+                const numBadge = (
+                  <span className="shrink-0 w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-slate-200/80 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-[9px] sm:text-[10px] font-black flex items-center justify-center">{ri + 1}</span>
+                );
                 if (!isEditing) {
                   return (
-                    <div key={gi} className="px-3 py-2.5 rounded-xl bg-white/90 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-200 truncate">
-                      {name || <span className="text-slate-300 dark:text-slate-600 font-normal">—</span>}
+                    <div key={gi} className="flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2 py-2 rounded-xl bg-white/90 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 min-w-0">
+                      {numBadge}
+                      <span className="truncate text-[11px] sm:text-xs md:text-sm font-bold text-slate-700 dark:text-slate-200">
+                        {name || <span className="text-slate-300 dark:text-slate-600 font-normal">—</span>}
+                      </span>
                     </div>
                   );
                 }
                 return (
-                  <div key={gi} className="flex items-stretch gap-1">
+                  <div key={gi} className="flex items-stretch gap-0.5 sm:gap-1 min-w-0">
+                    <div className="flex items-center shrink-0">{numBadge}</div>
                     <input
                       type="text"
                       aria-label={`${gi + 1}모둠 ${ri + 1}번 이름`}
                       value={name}
                       onChange={e => handleNameChange(gi, ri, e.target.value)}
-                      placeholder={`${ri + 1}번 이름`}
-                      className="flex-1 min-w-0 px-2.5 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800/60 text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder={`${ri + 1}번`}
+                      className="flex-1 min-w-0 px-1.5 sm:px-2 py-1.5 sm:py-2 rounded-lg sm:rounded-xl border border-indigo-200 dark:border-indigo-800/60 text-[11px] sm:text-xs md:text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                     <div className="flex flex-col shrink-0">
-                      <button aria-label={`${gi + 1}모둠 ${ri + 1}번 위로`} onClick={() => moveMember(gi, ri, -1)} disabled={ri === 0} className="flex-1 w-6 text-[9px] leading-none text-slate-400 hover:text-indigo-600 disabled:opacity-25">▲</button>
-                      <button aria-label={`${gi + 1}모둠 ${ri + 1}번 아래로`} onClick={() => moveMember(gi, ri, 1)} disabled={ri >= group.length - 1} className="flex-1 w-6 text-[9px] leading-none text-slate-400 hover:text-indigo-600 disabled:opacity-25">▼</button>
+                      <button aria-label={`${gi + 1}모둠 ${ri + 1}번 위로`} onClick={() => moveMember(gi, ri, -1)} disabled={ri === 0} className="flex-1 w-4 sm:w-5 text-[9px] leading-none text-slate-400 hover:text-indigo-600 disabled:opacity-25">▲</button>
+                      <button aria-label={`${gi + 1}모둠 ${ri + 1}번 아래로`} onClick={() => moveMember(gi, ri, 1)} disabled={ri >= group.length - 1} className="flex-1 w-4 sm:w-5 text-[9px] leading-none text-slate-400 hover:text-indigo-600 disabled:opacity-25">▼</button>
                     </div>
                   </div>
                 );
@@ -3818,7 +3841,7 @@ export default function App() {
         const data = snap.data();
         const ls = data.lessons || [];
         const lps = data.lessonPlans || [{ ...DEFAULT_LESSON_PLANS[0], lessons: ls.length > 0 ? ls : MOCK_LESSONS }];
-        const cs = data.classes || [];
+        const cs = decodeClassesFromFirestore(data.classes || []);
         const hs = data.holidays || [];
         const es = data.events || [];
         const rs = data.records || [];
@@ -3896,7 +3919,7 @@ export default function App() {
   const contextValue: AppContextType = {
     lessons: lessonsState, updateLessons: async (data) => { setLessonsState(data); saveToLocal('lessons', data); if (isFirebaseEnabled) await updateFirestoreField('lessons', data); },
     lessonPlans: lessonPlansState, updateLessonPlans: async (data) => { setLessonPlansState(data); saveToLocal('lessonPlans', data); if (isFirebaseEnabled) await updateFirestoreField('lessonPlans', data); },
-    classes: classesState, updateClasses: async (data) => { setClassesState(data); saveToLocal('classes', data); if (isFirebaseEnabled) await updateFirestoreField('classes', data); },
+    classes: classesState, updateClasses: async (data) => { setClassesState(data); saveToLocal('classes', data); if (isFirebaseEnabled) await updateFirestoreField('classes', encodeClassesForFirestore(data)); },
     setClassesOptimistic: (data) => { setClassesState(data); },
     holidays: holidaysState, updateHolidays: async (data) => { setHolidaysState(data); saveToLocal('holidays', data); if (isFirebaseEnabled) await updateFirestoreField('holidays', data); },
     events: eventsState, updateEvents: async (data) => { setEventsState(data); saveToLocal('events', data); if (isFirebaseEnabled) await updateFirestoreField('events', data); },
