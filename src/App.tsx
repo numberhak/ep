@@ -99,14 +99,15 @@ const dateUtils = {
 const GROUP_COUNT = 5;
 const MIN_GROUP_MEMBERS = 4;
 const MAX_GROUP_MEMBERS = 6;
+const DEFAULT_GROUP_MEMBERS = 5; // 모둠원 기본 인원
 
-// 저장된 값이 없거나 형식이 어긋나도 항상 5모둠 × 4~6명 구조로 맞춰준다.
+// 저장된 값이 없거나 형식이 어긋나도 항상 5모둠 × (기본 5명, 4~6명 범위) 구조로 맞춰준다.
 function normalizeGroupMembers(src?: string[][]): string[][] {
   const out: string[][] = [];
   for (let g = 0; g < GROUP_COUNT; g++) {
     const raw = Array.isArray(src?.[g]) ? src![g] : [];
     const members = raw.slice(0, MAX_GROUP_MEMBERS).map(m => (m ?? '').toString());
-    while (members.length < MIN_GROUP_MEMBERS) members.push('');
+    while (members.length < DEFAULT_GROUP_MEMBERS) members.push('');
     out.push(members);
   }
   return out;
@@ -527,7 +528,7 @@ function LessonPlanPage() {
     { id: 'plan-default', name: '기본 수업계획서', classIds: [], lessons }
   ];
 
-  const [selectedSemester, setSelectedSemester] = useState<1 | 2>(1);
+  const [selectedSemester, setSelectedSemester] = useState<1 | 2>(2);
   const [selectedPlanId, setSelectedPlanId] = useState<string>('');
   const [isEditMode, setIsEditMode] = useState(false);
   const [editData, setEditData] = useState<Lesson[]>([]);
@@ -1500,7 +1501,7 @@ function ScoreLogTab({
   const colorStyle = activeClass ? COLOR_MAP[activeClass.color] : COLOR_MAP['blue'];
 
   return (
-    <div className="flex-1 flex flex-col md:overflow-hidden p-5 md:p-6">
+    <div className="flex-1 flex flex-col p-5 md:p-6">
       {/* 헤더 */}
       <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200 dark:border-slate-700 shrink-0 gap-3 flex-wrap">
         <span className="text-sm font-bold text-slate-500 dark:text-slate-400">
@@ -1568,7 +1569,7 @@ function ScoreLogTab({
       )}
 
       {/* 이력 목록 */}
-      <div className="flex-1 md:overflow-y-auto space-y-2 md:pr-1">
+      <div className="flex-1 space-y-2 md:pr-1">
         {classScoreLogs.length > 0 ? classScoreLogs.map(log => {
           const isPlus = log.amount > 0;
           const isSelected = selectedIds.has(log.id);
@@ -2027,7 +2028,7 @@ function RecordsPage() {
   const bgStyle = activeClass ? COLOR_MAP[activeClass.color].bg : 'bg-slate-50 dark:bg-slate-900/50';
 
   return (
-    <div className={`p-4 md:p-8 h-full flex flex-col animate-in fade-in duration-500 overflow-y-auto md:overflow-hidden transition-colors ${bgStyle}`}>
+    <div className={`p-4 md:p-8 h-full flex flex-col animate-in fade-in duration-500 overflow-y-auto transition-colors ${bgStyle}`}>
       {confirmDeleteId && <ConfirmModal message="정말 이 기록을 삭제하시겠습니까?" onConfirm={() => handleDelete(confirmDeleteId)} onCancel={() => setConfirmDeleteId(null)} />}
 
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-4 md:mb-6 shrink-0 gap-4">
@@ -2042,7 +2043,7 @@ function RecordsPage() {
       </header>
 
       {activeClass ? (
-        <div className="flex-1 flex flex-col min-h-0 gap-4 md:gap-6 pb-4 md:pb-0">
+        <div className="flex flex-col gap-4 md:gap-6 pb-4">
           {/* 학급 전체 점수 */}
           <div className="flex gap-4 shrink-0 md:max-w-md">
             <ScoreCard title="🏅 학급 전체 점수" score={activeClass.classScore ?? 0} onUpdate={amt => handleUpdateScore('class', amt)} colorStyle={COLOR_MAP[activeClass.color]} />
@@ -2076,9 +2077,9 @@ function RecordsPage() {
             </div>
           )}
 
-          <div className="flex flex-col md:flex-1 md:flex-row gap-4 md:gap-6 md:min-h-0">
+          <div className="flex flex-col md:flex-row gap-4 md:gap-6 md:items-start">
             {/* 왼쪽: 기록 작성 */}
-            <div className="w-full md:w-1/3 flex flex-col shrink-0 order-1 md:h-full md:overflow-y-auto">
+            <div className="w-full md:w-1/3 flex flex-col shrink-0 order-1">
               <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-white dark:border-slate-700 flex flex-col">
                 <h3 className="font-bold text-lg text-slate-800 dark:text-white mb-5 flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${COLOR_MAP[activeClass.color].bg} border border-gray-300 dark:border-slate-600`}></span>{activeClass.className} 새 기록 작성</h3>
                 <div className="space-y-5 flex flex-col">
@@ -2097,7 +2098,7 @@ function RecordsPage() {
             </div>
 
             {/* 오른쪽: 탭 (기록 내역 / 점수 이력) */}
-            <div className="flex-1 flex flex-col bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-3xl shadow-sm border border-white dark:border-slate-700 md:overflow-hidden md:min-h-0 order-2">
+            <div className="flex-1 w-full flex flex-col bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-3xl shadow-sm border border-white dark:border-slate-700 order-2">
               {/* 탭 헤더 */}
               <div className="flex border-b border-gray-200 dark:border-slate-700 shrink-0">
                 <button
@@ -2115,7 +2116,7 @@ function RecordsPage() {
               </div>
 
               {activeTab === 'records' ? (
-                <div className="flex-1 flex flex-col md:overflow-hidden p-5 md:p-6">
+                <div className="flex-1 flex flex-col p-5 md:p-6">
                   <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-4 pb-4 border-b border-gray-200 dark:border-slate-700 gap-3 shrink-0">
                     <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{classRecords.length}개의 기록</span>
                     <div className="flex items-center gap-2 bg-white/80 dark:bg-slate-900/80 p-2 rounded-xl border border-gray-200 dark:border-slate-600 shadow-sm overflow-x-auto max-w-full scrollbar-hide">
@@ -2125,7 +2126,7 @@ function RecordsPage() {
                       <button onClick={handleExportCSV} className="bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-colors ml-1 shrink-0">Excel 저장</button>
                     </div>
                   </div>
-                  <div className="flex-1 md:overflow-y-auto md:pr-2 space-y-4">
+                  <div className="flex-1 md:pr-2 space-y-4">
                     {classRecords.length > 0 ? classRecords.map(rec => (
                       <div key={rec.id} className={`p-5 rounded-2xl shadow-sm border group relative transition-colors ${rec.important ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-700/50' : 'bg-white dark:bg-slate-900/50 border-slate-100 dark:border-slate-700/50'}`}>
                         <div className="flex justify-between items-start mb-3">
@@ -2150,7 +2151,7 @@ function RecordsPage() {
                         <div className="text-slate-700 dark:text-slate-200 text-base whitespace-pre-wrap leading-relaxed font-medium">{rec.content}</div>
                       </div>
                     )) : (
-                      <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500"><IconNotebook /><p className="mt-4 font-bold text-base">등록된 기록이 없습니다.</p></div>
+                      <div className="min-h-[240px] flex flex-col items-center justify-center text-slate-400 dark:text-slate-500"><IconNotebook /><p className="mt-4 font-bold text-base">등록된 기록이 없습니다.</p></div>
                     )}
                   </div>
                 </div>
@@ -3196,13 +3197,15 @@ function SettingsPage() {
   const [editingEvent, setEditingEvent] = useState<ClassEvent | null>(null);
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   const [expandedHolidayKey, setExpandedHolidayKey] = useState<string | null>(null);
+  const [showClassEvents, setShowClassEvents] = useState(false); // 개별 일정 배너 펼침
+  const [showCommonHolidays, setShowCommonHolidays] = useState(false); // 공통 일정 배너 펼침
   const [isHolidayModalOpen, setHolidayModalOpen] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState<{ initial: HolidayModalInitial; keys: Set<string> } | null>(null);
   const [classToDelete, setClassToDelete] = useState<ClassSchedule | null>(null);
 
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [editingScheduleSemester, setEditingScheduleSemester] = useState<1 | 2>(1);
-  const [viewScheduleSemester, setViewScheduleSemester] = useState<1 | 2>(1);
+  const [viewScheduleSemester, setViewScheduleSemester] = useState<1 | 2>(2);
   const [editClassName, setEditClassName] = useState('');
   const [editClassColor, setEditClassColor] = useState<ClassColor>('blue');
   const [editStartDate, setEditStartDate] = useState('');
@@ -3217,7 +3220,13 @@ function SettingsPage() {
   }, [classes, selectedTabClassId]);
 
   const activeClass = classes.find(c => c.classId === selectedTabClassId);
-  const activeClassEvents = events.filter(e => e.classId === selectedTabClassId).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const todayStr = dateUtils.formatDate(new Date());
+  // 오늘 기준 다가오는 일정을 가까운 날부터, 지난 일정은 최근 순으로 하단에 배치
+  const activeClassEvents = events.filter(e => e.classId === selectedTabClassId).sort((a, b) => {
+    const aPast = a.date < todayStr, bPast = b.date < todayStr;
+    if (aPast !== bPast) return aPast ? 1 : -1;
+    return aPast ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date);
+  });
 
   const getSemesterSchedule = (cls: ClassSchedule, sem: 1 | 2): { startDate: string; weeklySlots: WeeklySlot[] } | null => {
     if (sem === 1) return { startDate: cls.startDate, weeklySlots: cls.weeklySlots };
@@ -3370,8 +3379,13 @@ function SettingsPage() {
         const dates = Array.from(g.dates).sort();
         return { ...g, sortedDates: dates, first: dates[0], last: dates[dates.length - 1], slotList: Array.from(g.slots.values()) };
       })
-      .sort((a, b) => a.first.localeCompare(b.first));
-  }, [holidays]);
+      // 다가오는 일정은 가까운 날부터, 이미 끝난 일정은 최근 순으로 하단에 배치
+      .sort((a, b) => {
+        const aPast = a.last < todayStr, bPast = b.last < todayStr;
+        if (aPast !== bPast) return aPast ? 1 : -1;
+        return aPast ? b.first.localeCompare(a.first) : a.first.localeCompare(b.first);
+      });
+  }, [holidays, todayStr]);
 
   const fmtMD = (d: string) => { const dt = dateUtils.parseDate(d); const DAY = ['일','월','화','수','목','금','토']; return `${dt.getMonth() + 1}/${dt.getDate()}(${DAY[dt.getDay()]})`; };
 
@@ -3513,17 +3527,28 @@ function SettingsPage() {
               </div>
 
               <div className="bg-slate-100 dark:bg-slate-800/50 p-5 md:p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col">
-                <div className="flex justify-between items-center mb-4 shrink-0">
-                  <h2 className="text-base font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2"><span className="w-1.5 h-4 rounded-full bg-orange-400"></span>{activeClass.className} 개별 일정</h2>
-                  <button onClick={() => { setEditingEvent(null); setEventModalOpen(true); }} className="bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-orange-200">+ 일정 등록</button>
+                <div className="flex justify-between items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setShowClassEvents(v => !v)}
+                    aria-expanded={showClassEvents}
+                    className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                  >
+                    <span className="w-1.5 h-4 rounded-full bg-orange-400 shrink-0"></span>
+                    <h2 className="text-base font-bold text-gray-800 dark:text-gray-200 truncate">{activeClass.className} 개별 일정</h2>
+                    <span className="text-[11px] font-black px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400 shrink-0">{activeClassEvents.length}</span>
+                    <span className={`text-[11px] font-black text-slate-400 shrink-0 transition-transform ${showClassEvents ? 'rotate-90' : ''}`}>▶</span>
+                  </button>
+                  <button onClick={() => { setEditingEvent(null); setEventModalOpen(true); }} className="bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-orange-200 shrink-0">+ 일정 등록</button>
                 </div>
-                <div className="space-y-2 flex-1 overflow-y-auto pr-1">
+                {showClassEvents && (
+                <div className="space-y-2 mt-4 pr-1">
                   {activeClassEvents.length > 0 ? activeClassEvents.map(e => {
                     const isOpen = expandedEventId === e.id;
+                    const isPast = e.date < todayStr;
                     const accent = e.type === 'extra' ? 'indigo' : (e.type === 'replace' ? 'emerald' : 'orange');
                     const typeLabel = e.type === 'extra' ? '보강' : (e.type === 'replace' ? '내용 변경' : '결강');
                     return (
-                      <div key={e.id} className={`rounded-xl border shadow-sm overflow-hidden ${
+                      <div key={e.id} className={`rounded-xl border shadow-sm overflow-hidden transition-opacity ${isPast ? 'opacity-55 saturate-50' : ''} ${
                         accent === 'indigo' ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-100 dark:border-indigo-800/60'
                         : (accent === 'emerald' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-800/60'
                         : 'bg-white dark:bg-slate-800 border-orange-200 dark:border-orange-800/60')
@@ -3576,6 +3601,7 @@ function SettingsPage() {
                     <div className="flex items-center justify-center h-full min-h-[80px] border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl"><p className="text-xs text-slate-400 dark:text-slate-500 font-bold">등록된 개별 일정이 없습니다.</p></div>
                   )}
                 </div>
+                )}
               </div>
             </div>
           )
@@ -3584,25 +3610,36 @@ function SettingsPage() {
         )}
 
         <section className="bg-rose-50/50 dark:bg-rose-900/10 p-5 md:p-6 rounded-3xl border border-rose-100 dark:border-rose-900/30 shrink-0">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
-            <div>
-              <h2 className="text-sm font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2"><span className="w-1.5 h-4 bg-rose-400 rounded-full"></span>학교 공통 일정 (전체 학급)</h2>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <button
+              onClick={() => setShowCommonHolidays(v => !v)}
+              aria-expanded={showCommonHolidays}
+              className="flex-1 min-w-0 text-left"
+            >
+              <div className="flex items-center gap-2">
+                <span className="w-1.5 h-4 bg-rose-400 rounded-full shrink-0"></span>
+                <h2 className="text-sm font-bold text-rose-700 dark:text-rose-400 truncate">학교 공통 일정 (전체 학급)</h2>
+                <span className="text-[11px] font-black px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 shrink-0">{holidayGroups.length}</span>
+                <span className={`text-[11px] font-black text-rose-400 shrink-0 transition-transform ${showCommonHolidays ? 'rotate-90' : ''}`}>▶</span>
+              </div>
               <p className="text-[11px] text-rose-400 dark:text-rose-500 font-bold mt-1 ml-3.5">평일 공휴일은 휴강으로 자동 등록됩니다.</p>
-            </div>
-            <div className="flex gap-2">
+            </button>
+            <div className="flex gap-2 shrink-0">
               <button onClick={handleSeedHolidays} className="bg-white dark:bg-slate-800 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-rose-50 dark:hover:bg-rose-900/20">공휴일 불러오기</button>
               <button onClick={() => { setEditingHoliday(null); setHolidayModalOpen(true); }} className="bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-rose-200">+ 공통 일정 등록</button>
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+          {showCommonHolidays && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm mt-4">
             {holidayGroups.length > 0 ? holidayGroups.map((g, i) => {
               const dateLabel = g.first === g.last ? fmtMD(g.first) : `${fmtMD(g.first)} ~ ${fmtMD(g.last)}`;
               const dayCount = g.sortedDates.length;
               const gKey = `${g.title}__${g.isHoliday ? 1 : 0}__${g.first}`;
               const isOpen = expandedHolidayKey === gKey;
+              const isPast = g.last < todayStr;
               const isAuto = Array.from(g.keys).some(k => isAutoHolidayId(k));
               return (
-                <div key={i} className="bg-white/90 dark:bg-slate-800/80 rounded-2xl border border-rose-100 dark:border-rose-900/50 shadow-sm overflow-hidden self-start">
+                <div key={i} className={`bg-white/90 dark:bg-slate-800/80 rounded-2xl border border-rose-100 dark:border-rose-900/50 shadow-sm overflow-hidden self-start transition-opacity ${isPast ? 'opacity-55 saturate-50' : ''}`}>
                   {/* 접힌 상태: 날짜 + 내용만 */}
                   <button
                     aria-expanded={isOpen}
@@ -3650,6 +3687,7 @@ function SettingsPage() {
               <span className="text-slate-400 dark:text-slate-500 text-sm font-bold p-2">등록된 전체 일정이 없습니다.</span>
             )}
           </div>
+          )}
         </section>
       </div>
 
