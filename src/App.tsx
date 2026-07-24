@@ -44,11 +44,11 @@ export interface LessonPlan { id: string; name: string; semester?: 1 | 2; startD
 export interface WeeklySlot { dayOfWeek: number; period: number; }
 export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan';
 export interface SemesterSchedule { semester: 1 | 2; startDate: string; weeklySlots: WeeklySlot[]; }
-export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; semesterSchedules?: SemesterSchedule[]; classScore?: number; groupScores?: number[]; }
+export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; semesterSchedules?: SemesterSchedule[]; classScore?: number; groupScores?: number[]; groupMembers?: string[][]; }
 export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; periods?: number[]; classIds?: string[]; }
 export interface ClassEvent { id: string; classId: string; date: string; period: number; title: string; type: 'exception' | 'extra' | 'replace'; }
 export interface ClassRecord { id: string; classId: string; date: string; content: string; important?: boolean; }
-export interface UserProfile { name: string; subject: string; }
+export interface UserProfile { name: string; subject: string; autoHolidayYears?: number[]; }
 export interface Task { id: string; title: string; date?: string; completed: boolean; }
 export interface TaskNote { id: string; content: string; color: ClassColor; createdAt: string; }
 
@@ -91,6 +91,122 @@ const dateUtils = {
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   }
 };
+
+// ==========================================
+// 모둠 구성 상수 및 헬퍼
+// 학급마다 5모둠, 각 모둠은 4~6명. 배열 인덱스 + 1 = 모둠 번호.
+// ==========================================
+const GROUP_COUNT = 5;
+const MIN_GROUP_MEMBERS = 4;
+const MAX_GROUP_MEMBERS = 6;
+
+// 저장된 값이 없거나 형식이 어긋나도 항상 5모둠 × 4~6명 구조로 맞춰준다.
+function normalizeGroupMembers(src?: string[][]): string[][] {
+  const out: string[][] = [];
+  for (let g = 0; g < GROUP_COUNT; g++) {
+    const raw = Array.isArray(src?.[g]) ? src![g] : [];
+    const members = raw.slice(0, MAX_GROUP_MEMBERS).map(m => (m ?? '').toString());
+    while (members.length < MIN_GROUP_MEMBERS) members.push('');
+    out.push(members);
+  }
+  return out;
+}
+
+// ==========================================
+// 2-1. 대한민국 공휴일 자동 등록
+// ------------------------------------------
+// 관공서의 공휴일에 관한 규정 / 우주항공청 월력요항 기준.
+// 새로운 연도가 필요하면 아래 표에 { date, title } 을 추가하기만 하면 됩니다.
+// (2026.4월부터 노동절·제헌절이 관공서 공휴일로 지정되어 포함되어 있습니다.)
+// ==========================================
+const KR_PUBLIC_HOLIDAYS: Record<number, { date: string; title: string }[]> = {
+  2025: [
+    { date: '2025-01-01', title: '신정' },
+    { date: '2025-01-27', title: '임시공휴일' },
+    { date: '2025-01-28', title: '설날 연휴' },
+    { date: '2025-01-29', title: '설날' },
+    { date: '2025-01-30', title: '설날 연휴' },
+    { date: '2025-03-03', title: '삼일절 대체공휴일' },
+    { date: '2025-05-05', title: '어린이날·부처님오신날' },
+    { date: '2025-05-06', title: '대체공휴일' },
+    { date: '2025-06-03', title: '대통령선거일' },
+    { date: '2025-06-06', title: '현충일' },
+    { date: '2025-08-15', title: '광복절' },
+    { date: '2025-10-03', title: '개천절' },
+    { date: '2025-10-06', title: '추석' },
+    { date: '2025-10-07', title: '추석 연휴' },
+    { date: '2025-10-08', title: '추석 대체공휴일' },
+    { date: '2025-10-09', title: '한글날' },
+    { date: '2025-12-25', title: '성탄절' },
+  ],
+  2026: [
+    { date: '2026-01-01', title: '신정' },
+    { date: '2026-02-16', title: '설날 연휴' },
+    { date: '2026-02-17', title: '설날' },
+    { date: '2026-02-18', title: '설날 연휴' },
+    { date: '2026-03-02', title: '삼일절 대체공휴일' },
+    { date: '2026-05-01', title: '노동절' },
+    { date: '2026-05-05', title: '어린이날' },
+    { date: '2026-05-25', title: '부처님오신날 대체공휴일' },
+    { date: '2026-06-03', title: '지방선거일' },
+    { date: '2026-07-17', title: '제헌절' },
+    { date: '2026-08-17', title: '광복절 대체공휴일' },
+    { date: '2026-09-24', title: '추석 연휴' },
+    { date: '2026-09-25', title: '추석' },
+    { date: '2026-10-05', title: '개천절 대체공휴일' },
+    { date: '2026-10-09', title: '한글날' },
+    { date: '2026-12-25', title: '성탄절' },
+  ],
+  2027: [
+    { date: '2027-01-01', title: '신정' },
+    { date: '2027-02-08', title: '설날 연휴' },
+    { date: '2027-02-09', title: '설날 대체공휴일' },
+    { date: '2027-03-01', title: '삼일절' },
+    { date: '2027-05-03', title: '노동절 대체공휴일' },
+    { date: '2027-05-05', title: '어린이날' },
+    { date: '2027-05-13', title: '부처님오신날' },
+    { date: '2027-07-19', title: '제헌절 대체공휴일' },
+    { date: '2027-08-16', title: '광복절 대체공휴일' },
+    { date: '2027-09-14', title: '추석 연휴' },
+    { date: '2027-09-15', title: '추석' },
+    { date: '2027-09-16', title: '추석 연휴' },
+    { date: '2027-10-04', title: '개천절 대체공휴일' },
+    { date: '2027-10-11', title: '한글날 대체공휴일' },
+    { date: '2027-12-27', title: '성탄절 대체공휴일' },
+  ],
+};
+
+const AUTO_HOLIDAY_PREFIX = 'kr-';
+const isAutoHolidayId = (id?: string) => !!id && id.startsWith(AUTO_HOLIDAY_PREFIX);
+
+// 주말(토·일)은 어차피 수업이 없으므로 평일 공휴일만 휴강으로 등록한다.
+function getAutoHolidaysForYear(year: number): Holiday[] {
+  const list = KR_PUBLIC_HOLIDAYS[year];
+  if (!list) return [];
+  return list
+    .filter(h => {
+      const d = dateUtils.parseDate(h.date).getDay();
+      return d >= 1 && d <= 5;
+    })
+    .map(h => ({ id: `${AUTO_HOLIDAY_PREFIX}${h.date}`, date: h.date, title: h.title, isHoliday: true }));
+}
+
+// 이미 등록된 항목(직접 등록한 하루 종일 휴강 포함)과 겹치지 않는 공휴일만 추려낸다.
+function pickMissingAutoHolidays(existing: Holiday[], years: number[]): Holiday[] {
+  const existingIds = new Set(existing.map(h => h.id).filter(Boolean) as string[]);
+  const allDayHolidayDates = new Set(
+    existing.filter(h => h.isHoliday !== false && (!h.periods || h.periods.length === 0)).map(h => h.date)
+  );
+  const out: Holiday[] = [];
+  years.forEach(y => {
+    getAutoHolidaysForYear(y).forEach(h => {
+      if (existingIds.has(h.id!) || allDayHolidayDates.has(h.date)) return;
+      out.push(h);
+      allDayHolidayDates.add(h.date);
+    });
+  });
+  return out;
+}
 
 const COLOR_MAP: Record<ClassColor, { bg: string; text: string; border: string; hover: string; leftBorder: string; ring: string }> = {
   blue:   { bg: 'bg-blue-50 dark:bg-blue-900/20',   text: 'text-blue-700 dark:text-blue-300',   border: 'border-blue-200 dark:border-blue-800/60',   hover: 'hover:bg-blue-100 dark:hover:bg-blue-900/40 hover:border-blue-400 dark:hover:border-blue-500', leftBorder: 'border-l-blue-500 dark:border-l-blue-400', ring: 'focus-visible:ring-blue-500' },
@@ -254,6 +370,54 @@ function getLessonsForClass(plan: LessonPlan | undefined, classId: string, fallb
   if (!plan) return fallback;
   const override = (plan.classLessonPlans || []).find(clp => clp.classId === classId);
   return override ? override.lessons : plan.lessons;
+}
+
+// ==========================================
+// 개별 학급 일정 ↔ 수업계획서 연동
+// ------------------------------------------
+// 학급 개별 일정(결강/내용 변경)은 수업계획서에 "일정 차시"로 끼어 들어간다.
+// 위치는 저장하지 않고 날짜 기준으로 매번 계산하므로,
+// 나중에 차시를 더 입력하면 자동으로 알맞은 위치로 다시 정렬된다.
+// ==========================================
+const PLAN_EVENT_TYPES: ClassEvent['type'][] = ['exception', 'replace'];
+
+const isBefore = (aDate: string, aPeriod: number, bDate: string, bPeriod: number) =>
+  aDate < bDate || (aDate === bDate && aPeriod < bPeriod);
+
+// 어떤 날짜가 몇 학기인지 (2학기 시간표 시작일 기준)
+function getSemesterForDate(cls: ClassSchedule, dateStr: string): 1 | 2 {
+  const sem2 = (cls.semesterSchedules || []).find(s => s.semester === 2);
+  return sem2?.startDate && dateStr >= sem2.startDate ? 2 : 1;
+}
+
+// 학급 일정이 들어갈 계획서 구간과 "몇 차시 뒤"인지를 계산
+function locateEventInPlan(
+  plans: LessonPlan[], cls: ClassSchedule, holidays: Holiday[], events: ClassEvent[], ev: ClassEvent
+): { planName: string; afterOrder: number; beyondPlan: boolean } | null {
+  const semester = getSemesterForDate(cls, ev.date);
+  const segs = getPlanSegmentsForClass(plans, semester, cls);
+  if (segs.length === 0) return null;
+
+  let segIdx = -1;
+  for (let i = 0; i < segs.length; i++) {
+    const nextStart = i + 1 < segs.length ? segs[i + 1].start : null;
+    if (ev.date >= segs[i].start && (!nextStart || ev.date < nextStart)) { segIdx = i; break; }
+  }
+  if (segIdx < 0) return null;
+
+  const seg = segs[segIdx];
+  const endExclusive = segIdx + 1 < segs.length ? segs[segIdx + 1].start : null;
+  const sem2 = (cls.semesterSchedules || []).find(s => s.semester === 2);
+  const effectiveCls = semester === 2 && sem2?.startDate ? { ...cls, startDate: sem2.startDate } : cls;
+  const viewEnd = dateUtils.formatDate(dateUtils.addDays(dateUtils.parseDate(ev.date), 400));
+
+  const scheduled = generateClassLessonSchedule(
+    seg.lessons, effectiveCls, holidays, events, viewEnd, seg.start, endExclusive
+  );
+  const lessonItems = scheduled.filter(s => s.type === 'lesson');
+  const before = lessonItems.filter(s => isBefore(s.date, s.period, ev.date, ev.period)).length;
+  const hasAfter = lessonItems.some(s => isBefore(ev.date, ev.period, s.date, s.period));
+  return { planName: seg.plan.name, afterOrder: before, beyondPlan: !hasAfter };
 }
 
 // ==========================================
@@ -639,6 +803,61 @@ function LessonPlanPage() {
     return map;
   }, [activePlan, activePlanRange, selectedClassTab, selectedSemester, classes, holidays, events]);
 
+  // 선택된 학급 탭의 개별 일정 → 계획서 안에서의 삽입 위치 계산
+  // (저장하지 않고 날짜 기준으로 매번 계산 → 차시를 추가하면 자동으로 제자리를 찾아간다)
+  const classEventRows = useMemo(() => {
+    if (!activePlan || !selectedClassTab) return [] as { event: ClassEvent; index: number }[];
+    const cls = classes.find(c => c.classId === selectedClassTab);
+    if (!cls) return [] as { event: ClassEvent; index: number }[];
+    const sem2 = (cls.semesterSchedules || []).find(ss => ss.semester === 2);
+    const semesterStart = selectedSemester === 2 ? (sem2?.startDate || cls.startDate) : cls.startDate;
+    const segStart = activePlan.startDate || semesterStart;
+    const segEnd = activePlanRange.endExclusive;
+
+    const relevant = events
+      .filter(e => e.classId === selectedClassTab && PLAN_EVENT_TYPES.includes(e.type))
+      .filter(e => e.date >= segStart && (!segEnd || e.date < segEnd))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.period - b.period);
+
+    return relevant.map(ev => {
+      let index = 0;
+      for (const item of classEditData) {
+        const sched = classScheduleMap.get(item.order);
+        if (!sched) break;                       // 아직 날짜가 잡히지 않은 차시 → 뒤로 미룸
+        if (isBefore(sched.date, sched.period, ev.date, ev.period)) index++;
+        else break;
+      }
+      return { event: ev, index };
+    });
+  }, [activePlan, activePlanRange, selectedClassTab, selectedSemester, classes, events, classEditData, classScheduleMap]);
+
+  // 차시 + 일정을 날짜 순서대로 합친 렌더링 목록
+  const mergedClassRows = useMemo(() => {
+    type Row =
+      | { type: 'lesson'; item: { order: number; title: string; memo: string }; index: number }
+      | { type: 'event'; event: ClassEvent; beyondPlan: boolean };
+    const rows: Row[] = [];
+    classEditData.forEach((item, i) => {
+      classEventRows.filter(r => r.index === i).forEach(r => rows.push({ type: 'event', event: r.event, beyondPlan: false }));
+      rows.push({ type: 'lesson', item, index: i });
+    });
+    classEventRows
+      .filter(r => r.index >= classEditData.length)
+      .forEach(r => rows.push({ type: 'event', event: r.event, beyondPlan: true }));
+    return rows;
+  }, [classEditData, classEventRows]);
+
+  const eventRowStyle = (type: ClassEvent['type']) =>
+    type === 'exception'
+      ? { chip: 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300', bg: 'bg-orange-50/60 dark:bg-orange-900/10', label: '결강' }
+      : { chip: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300', bg: 'bg-emerald-50/60 dark:bg-emerald-900/10', label: '내용 변경' };
+
+  const fmtEventDate = (dateStr: string, period: number) => {
+    const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+    const d = dateUtils.parseDate(dateStr);
+    return `${d.getMonth() + 1}/${d.getDate()}(${DAY_KO[d.getDay()]}) ${period}교시`;
+  };
+
   // 기본 계획은 모든 학급에 자동 적용 — 학급별 탭에 전체 학급 노출
   const tabClasses = classes;
 
@@ -786,6 +1005,7 @@ function LessonPlanPage() {
               <div>
                 <p className="text-sm font-black text-indigo-800 dark:text-indigo-200">{activeClassInfo?.className} 전용 수업 계획</p>
                 <p className="text-xs text-indigo-500 dark:text-indigo-400 mt-0.5">기본 계획에서 복제된 내용입니다. 이 학급에만 적용되는 수업 제목과 메모를 수정하세요.</p>
+                <p className="text-[11px] text-indigo-400 dark:text-indigo-500 mt-0.5">설정에서 등록한 개별 학급 일정은 날짜에 맞는 위치에 자동으로 끼어들어 표시됩니다.</p>
               </div>
               <div className="flex gap-2 shrink-0">
                 <button onClick={handleResetClassOverrides} className="px-3 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 transition-colors">기본으로 초기화</button>
@@ -805,14 +1025,34 @@ function LessonPlanPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-slate-700/50">
-                  {classEditData.map((item, index) => {
+                  {mergedClassRows.map((row, rowIdx) => {
+                    if (row.type === 'event') {
+                      const st = eventRowStyle(row.event.type);
+                      return (
+                        <tr key={`ev-${row.event.id}`} className={st.bg}>
+                          <td className="px-6 py-4">
+                            <span className={`text-[11px] font-black px-2 py-1 rounded-md whitespace-nowrap ${st.chip}`}>{st.label}</span>
+                          </td>
+                          <td className="px-6 py-4 font-bold text-slate-800 dark:text-slate-100">{row.event.title}</td>
+                          <td className="px-6 py-4 text-xs text-slate-400 dark:text-slate-500 font-bold">
+                            {row.beyondPlan ? '계획서 이후 일정 (차시 입력 시 자동 정렬)' : '개별 학급 일정'}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`text-[11px] font-bold px-2 py-1 rounded-lg whitespace-nowrap ${st.chip}`}>{fmtEventDate(row.event.date, row.event.period)}</span>
+                          </td>
+                          <td className="px-6 py-4 text-center text-xs text-slate-400 font-bold">설정에서 관리</td>
+                        </tr>
+                      );
+                    }
+                    const item = row.item;
+                    const index = row.index;
                     const baseLesson = activePlan.lessons.find(l => l.order === item.order);
                     const baseSame = baseLesson && item.title === baseLesson.title && item.memo === baseLesson.memo;
                     const sched = classScheduleMap.get(item.order);
                     const DAY_KO = ['일','월','화','수','목','금','토'];
                     const schedLabel = sched ? (() => { const d = dateUtils.parseDate(sched.date); return `${d.getMonth()+1}/${d.getDate()}(${DAY_KO[d.getDay()]}) ${sched.period}교시`; })() : null;
                     return (
-                      <tr key={index} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors bg-indigo-50/10 dark:bg-indigo-900/10">
+                      <tr key={`ls-${index}-${rowIdx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors bg-indigo-50/10 dark:bg-indigo-900/10">
                         <td className="px-6 py-4">
                           <span className="font-black text-indigo-600 dark:text-indigo-400 whitespace-nowrap">{index + 1}차시</span>
                           {!baseSame && <span className="ml-2 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded-md">수정됨</span>}
@@ -838,7 +1078,7 @@ function LessonPlanPage() {
                       </tr>
                     );
                   })}
-                  {classEditData.length === 0 && (
+                  {mergedClassRows.length === 0 && (
                     <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-400 font-bold">등록된 차시가 없습니다.</td></tr>
                   )}
                 </tbody>
@@ -846,14 +1086,31 @@ function LessonPlanPage() {
             </div>
 
             <div className="md:hidden space-y-3">
-              {classEditData.map((item, index) => {
+              {mergedClassRows.map((row, rowIdx) => {
+                if (row.type === 'event') {
+                  const st = eventRowStyle(row.event.type);
+                  return (
+                    <div key={`ev-${row.event.id}`} className={`p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-600 ${st.bg}`}>
+                      <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                        <span className={`text-[11px] font-black px-2 py-1 rounded-md ${st.chip}`}>{st.label}</span>
+                        <span className={`text-[11px] font-bold px-2 py-1 rounded-lg ${st.chip}`}>{fmtEventDate(row.event.date, row.event.period)}</span>
+                      </div>
+                      <h3 className="font-bold text-slate-800 dark:text-slate-100">{row.event.title}</h3>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500 font-bold mt-1">
+                        {row.beyondPlan ? '계획서 이후 일정 (차시 입력 시 자동 정렬)' : '개별 학급 일정 · 설정에서 관리'}
+                      </p>
+                    </div>
+                  );
+                }
+                const item = row.item;
+                const index = row.index;
                 const baseLesson = activePlan.lessons.find(l => l.order === item.order);
                 const baseSame = baseLesson && item.title === baseLesson.title && item.memo === baseLesson.memo;
                 const sched = classScheduleMap.get(item.order);
                 const DAY_KO = ['일','월','화','수','목','금','토'];
                 const schedLabel = sched ? (() => { const d = dateUtils.parseDate(sched.date); return `${d.getMonth()+1}/${d.getDate()}(${DAY_KO[d.getDay()]}) ${sched.period}교시`; })() : null;
                 return (
-                  <div key={index} className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm">
+                  <div key={`ls-${index}-${rowIdx}`} className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm">
                     <div className="flex justify-between items-start gap-3 mb-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-lg">{index + 1}차시</span>
@@ -873,7 +1130,7 @@ function LessonPlanPage() {
                   </div>
                 );
               })}
-              {classEditData.length === 0 && (
+              {mergedClassRows.length === 0 && (
                 <div className="bg-white dark:bg-slate-800 p-10 rounded-2xl border border-gray-100 dark:border-slate-700 text-center text-slate-400 font-bold">등록된 차시가 없습니다.</div>
               )}
             </div>
@@ -1418,6 +1675,194 @@ function ScoreCard({ title, score, onUpdate, colorStyle }: { title: string; scor
   );
 }
 
+// ==========================================
+// 모둠 보드 (점수 + 모둠원 한눈에 보기)
+// 같은 번호의 모둠원이 같은 행에 오도록 5모둠을 열로 배치한다.
+// ==========================================
+function GroupScoreCard({ index, score, onUpdate, colorStyle }: {
+  index: number; score: number; onUpdate: (amount: number) => void; colorStyle: any;
+}) {
+  const [customInput, setCustomInput] = useState('');
+  const handleApply = () => {
+    const val = parseFloat(customInput);
+    if (customInput.trim() === '' || isNaN(val)) return;
+    onUpdate(Math.round(val * 100) / 100);
+    setCustomInput('');
+  };
+  const displayScore = Number.isInteger(score) ? score : parseFloat(score.toFixed(2));
+
+  return (
+    <div className="bg-white/90 dark:bg-slate-800/90 p-3 rounded-2xl shadow-sm border border-white dark:border-slate-700 flex flex-col gap-2">
+      <div className={`text-xs font-black ${colorStyle.text} opacity-80`}>👥 {index + 1}모둠</div>
+      <div className="text-2xl font-black text-gray-800 dark:text-white leading-none">{displayScore}<span className="text-sm ml-0.5">점</span></div>
+      <div className="flex gap-1.5">
+        <button aria-label={`${index + 1}모둠 1점 차감`} onClick={() => onUpdate(-1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-lg text-sm font-black py-2 transition-colors shadow-sm">-1</button>
+        <button aria-label={`${index + 1}모둠 1점 추가`} onClick={() => onUpdate(1)} className="flex-1 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-200 rounded-lg text-sm font-black py-2 transition-colors shadow-sm">+1</button>
+      </div>
+      <div className="flex gap-1">
+        <input
+          type="number"
+          step="0.01"
+          aria-label={`${index + 1}모둠 사용자 입력 점수`}
+          value={customInput}
+          onChange={e => setCustomInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleApply()}
+          className="w-full min-w-0 text-xs border border-gray-200 dark:border-slate-600 px-2 py-2 rounded-lg text-center font-bold outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
+          placeholder="점수"
+        />
+        <button aria-label={`${index + 1}모둠 점수 반영`} onClick={handleApply} className="bg-slate-800 dark:bg-indigo-600 text-white text-xs px-2.5 rounded-lg font-bold hover:bg-slate-700 dark:hover:bg-indigo-500 whitespace-nowrap shrink-0">반영</button>
+      </div>
+    </div>
+  );
+}
+
+interface GroupBoardProps {
+  classId: string;
+  members: string[][];
+  groupScores: number[];
+  colorStyle: any;
+  onUpdateScore: (index: number, amount: number) => void;
+  onSaveMembers: (members: string[][]) => Promise<void>;
+}
+function GroupBoard({ classId, members, groupScores, colorStyle, onUpdateScore, onSaveMembers }: GroupBoardProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState<string[][]>(() => normalizeGroupMembers(members));
+
+  // 학급을 바꾸면 편집 상태를 정리하고 새 학급 데이터로 초기화
+  // (편집 중이 아닐 땐 members 를 그대로 렌더링하므로 별도 동기화가 필요 없다)
+  useEffect(() => { setIsEditing(false); setDraft(normalizeGroupMembers(members)); }, [classId]);
+
+  const view = isEditing ? draft : normalizeGroupMembers(members);
+  const rowCount = Math.max(MIN_GROUP_MEMBERS, ...view.map(g => g.length));
+  const gridTemplate = { gridTemplateColumns: `40px repeat(${GROUP_COUNT}, minmax(148px, 1fr))` };
+  const boardMinWidth = 40 + GROUP_COUNT * 148 + GROUP_COUNT * 8;
+
+  const handleNameChange = (groupIdx: number, memberIdx: number, value: string) => {
+    setDraft(prev => prev.map((g, gi) => gi !== groupIdx ? g : g.map((m, mi) => mi === memberIdx ? value : m)));
+  };
+
+  // 위/아래 아이콘으로 모둠 번호(순서) 변경
+  const moveMember = (groupIdx: number, memberIdx: number, direction: -1 | 1) => {
+    const target = memberIdx + direction;
+    setDraft(prev => prev.map((g, gi) => {
+      if (gi !== groupIdx || target < 0 || target >= g.length) return g;
+      const next = [...g];
+      [next[memberIdx], next[target]] = [next[target], next[memberIdx]];
+      return next;
+    }));
+  };
+
+  const addMember = (groupIdx: number) => {
+    setDraft(prev => prev.map((g, gi) => (gi === groupIdx && g.length < MAX_GROUP_MEMBERS) ? [...g, ''] : g));
+  };
+  const removeMember = (groupIdx: number) => {
+    setDraft(prev => prev.map((g, gi) => (gi === groupIdx && g.length > MIN_GROUP_MEMBERS) ? g.slice(0, -1) : g));
+  };
+
+  const handleSave = async () => {
+    await onSaveMembers(draft.map(g => g.map(m => m.trim())));
+    setIsEditing(false);
+  };
+
+  return (
+    <section className="shrink-0 bg-white/60 dark:bg-slate-800/60 backdrop-blur-sm rounded-3xl border border-white dark:border-slate-700 p-4 md:p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+        <div>
+          <h3 className="text-sm font-black text-slate-700 dark:text-slate-200">👥 모둠 보드</h3>
+          <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 mt-0.5">
+            {isEditing ? '이름을 입력하고 ▲▼로 모둠 번호를 바꿀 수 있습니다.' : '모둠 점수 아래에 같은 번호끼리 같은 행으로 표시됩니다.'}
+          </p>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          {isEditing ? (
+            <>
+              <button onClick={() => { setDraft(normalizeGroupMembers(members)); setIsEditing(false); }} className="px-3 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 transition-colors">취소</button>
+              <button onClick={handleSave} className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 dark:bg-indigo-500 text-white hover:bg-indigo-700 shadow-sm transition-colors">저장</button>
+            </>
+          ) : (
+            <button onClick={() => { setDraft(normalizeGroupMembers(members)); setIsEditing(true); }} className="px-4 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">모둠원 편집</button>
+          )}
+        </div>
+      </div>
+
+      <div className="overflow-x-auto scrollbar-hide -mx-1 px-1 pb-1">
+        <div style={{ minWidth: `${boardMinWidth}px` }}>
+          {/* 모둠 점수 행 */}
+          <div className="grid gap-2" style={gridTemplate}>
+            <div />
+            {Array.from({ length: GROUP_COUNT }).map((_, gi) => (
+              <GroupScoreCard key={gi} index={gi} score={groupScores[gi] ?? 0} onUpdate={amt => onUpdateScore(gi, amt)} colorStyle={colorStyle} />
+            ))}
+          </div>
+
+          {/* 편집 중일 때만: 모둠별 인원 조절 (4~6명) */}
+          {isEditing && (
+            <div className="grid gap-2 mt-2" style={gridTemplate}>
+              <div />
+              {Array.from({ length: GROUP_COUNT }).map((_, gi) => (
+                <div key={gi} className="flex items-center justify-between gap-1 bg-slate-100 dark:bg-slate-900/60 rounded-lg px-2 py-1.5 border border-slate-200 dark:border-slate-700">
+                  <button
+                    aria-label={`${gi + 1}모둠 인원 줄이기`}
+                    onClick={() => removeMember(gi)}
+                    disabled={draft[gi].length <= MIN_GROUP_MEMBERS}
+                    className="w-6 h-6 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-500 font-black text-xs disabled:opacity-30"
+                  >−</button>
+                  <span className="text-[11px] font-black text-slate-500 dark:text-slate-400">{draft[gi].length}명</span>
+                  <button
+                    aria-label={`${gi + 1}모둠 인원 늘리기`}
+                    onClick={() => addMember(gi)}
+                    disabled={draft[gi].length >= MAX_GROUP_MEMBERS}
+                    className="w-6 h-6 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-500 font-black text-xs disabled:opacity-30"
+                  >＋</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 모둠원 행 — 같은 번호는 같은 행 */}
+          {Array.from({ length: rowCount }).map((_, ri) => (
+            <div key={ri} className="grid gap-2 mt-2" style={gridTemplate}>
+              <div className="flex items-center justify-center">
+                <span className="w-7 h-7 rounded-full bg-slate-200/80 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-black flex items-center justify-center">{ri + 1}</span>
+              </div>
+              {Array.from({ length: GROUP_COUNT }).map((_, gi) => {
+                const group = view[gi];
+                if (ri >= group.length) {
+                  return <div key={gi} className="rounded-xl border border-dashed border-slate-200 dark:border-slate-700/60" />;
+                }
+                const name = group[ri];
+                if (!isEditing) {
+                  return (
+                    <div key={gi} className="px-3 py-2.5 rounded-xl bg-white/90 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-200 truncate">
+                      {name || <span className="text-slate-300 dark:text-slate-600 font-normal">—</span>}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={gi} className="flex items-stretch gap-1">
+                    <input
+                      type="text"
+                      aria-label={`${gi + 1}모둠 ${ri + 1}번 이름`}
+                      value={name}
+                      onChange={e => handleNameChange(gi, ri, e.target.value)}
+                      placeholder={`${ri + 1}번 이름`}
+                      className="flex-1 min-w-0 px-2.5 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800/60 text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <div className="flex flex-col shrink-0">
+                      <button aria-label={`${gi + 1}모둠 ${ri + 1}번 위로`} onClick={() => moveMember(gi, ri, -1)} disabled={ri === 0} className="flex-1 w-6 text-[9px] leading-none text-slate-400 hover:text-indigo-600 disabled:opacity-25">▲</button>
+                      <button aria-label={`${gi + 1}모둠 ${ri + 1}번 아래로`} onClick={() => moveMember(gi, ri, 1)} disabled={ri >= group.length - 1} className="flex-1 w-6 text-[9px] leading-none text-slate-400 hover:text-indigo-600 disabled:opacity-25">▼</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function RecordsPage() {
   const { classes, updateClasses, setClassesOptimistic, records, updateRecords, scoreLogs, updateScoreLogs, setScoreLogsOptimistic, pendingScoreRef, pageParams } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
@@ -1554,6 +1999,16 @@ function RecordsPage() {
     }, 1200);
   };
 
+  const handleSaveGroupMembers = async (nextMembers: string[][]) => {
+    if (!activeClass) return;
+    try {
+      await updateClasses(classes.map(c => c.classId === activeClass.classId ? { ...c, groupMembers: nextMembers } : c));
+      addToast('모둠원이 저장되었습니다.', 'success');
+    } catch {
+      addToast('모둠원 저장에 실패했습니다.');
+    }
+  };
+
   const handleExportCSV = () => {
     if (!activeClass) return;
     const filteredRecords = classRecords.filter(r => r.date >= exportStartDate && r.date <= exportEndDate);
@@ -1578,7 +2033,7 @@ function RecordsPage() {
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-4 md:mb-6 shrink-0 gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">학급 기록장</h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">선택한 학급의 누적 점수와 특이사항을 기록합니다.</p>
+          <p className="text-gray-600 dark:text-gray-400 mt-1 md:mt-2 text-xs md:text-sm">선택한 학급의 모둠 점수·모둠원과 특이사항을 기록합니다.</p>
         </div>
         <select aria-label="기록할 학급 선택" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)} className="w-full sm:w-auto text-base bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border border-gray-300 dark:border-slate-600 text-gray-800 dark:text-white px-4 py-3.5 rounded-xl font-bold shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
           <option value="" disabled>학급을 선택하세요</option>
@@ -1588,13 +2043,20 @@ function RecordsPage() {
 
       {activeClass ? (
         <div className="flex-1 flex flex-col min-h-0 gap-4 md:gap-6 pb-4 md:pb-0">
-          {/* 점수 카드 */}
-          <div className="flex gap-4 overflow-x-auto pb-4 shrink-0 scrollbar-hide snap-x md:snap-none">
+          {/* 학급 전체 점수 */}
+          <div className="flex gap-4 shrink-0 md:max-w-md">
             <ScoreCard title="🏅 학급 전체 점수" score={activeClass.classScore ?? 0} onUpdate={amt => handleUpdateScore('class', amt)} colorStyle={COLOR_MAP[activeClass.color]} />
-            {Array.from({ length: 5 }).map((_, i) => (
-              <ScoreCard key={i} title={`👥 ${i + 1}모둠 점수`} score={(activeClass.groupScores ?? [0, 0, 0, 0, 0])[i]} onUpdate={amt => handleUpdateScore('group', amt, i)} colorStyle={COLOR_MAP[activeClass.color]} />
-            ))}
           </div>
+
+          {/* 모둠 점수 + 모둠원 */}
+          <GroupBoard
+            classId={activeClass.classId}
+            members={activeClass.groupMembers ?? []}
+            groupScores={activeClass.groupScores ?? [0, 0, 0, 0, 0]}
+            colorStyle={COLOR_MAP[activeClass.color]}
+            onUpdateScore={(i, amt) => handleUpdateScore('group', amt, i)}
+            onSaveMembers={handleSaveGroupMembers}
+          />
 
           {/* 중요 기록 핀 영역 */}
           {importantRecords.length > 0 && (
@@ -2510,27 +2972,29 @@ function ClassManageModal({ classes, onClose, onEdit, onDelete }: ClassManageMod
   );
 }
 
-interface EventModalProps { classId: string; className: string; onClose: () => void; onAdd: (event: ClassEvent) => void; }
-function EventModal({ classId, className, onClose, onAdd }: EventModalProps) {
-  const [newEventDate, setNewEventDate] = useState('');
-  const [newEventPeriod, setNewEventPeriod] = useState<number>(1);
-  const [newEventTitle, setNewEventTitle] = useState('');
-  const [newEventType, setNewEventType] = useState<'exception' | 'extra' | 'replace'>('exception');
+interface EventModalProps { classId: string; className: string; onClose: () => void; onAdd: (event: ClassEvent) => void; initial?: ClassEvent; }
+function EventModal({ classId, className, onClose, onAdd, initial }: EventModalProps) {
+  const isEdit = !!initial;
+  const [newEventDate, setNewEventDate] = useState(initial?.date || '');
+  const [newEventPeriod, setNewEventPeriod] = useState<number>(initial?.period || 1);
+  const [newEventTitle, setNewEventTitle] = useState(initial && initial.type !== 'extra' ? initial.title : '');
+  const [newEventType, setNewEventType] = useState<'exception' | 'extra' | 'replace'>(initial?.type || 'exception');
   const [eventError, setEventError] = useState('');
 
   const handleAdd = () => {
     if (!newEventDate || ((newEventType === 'exception' || newEventType === 'replace') && !newEventTitle.trim())) { 
       setEventError('모든 필드를 입력하세요.'); return; 
     }
-    const newEvent: ClassEvent = { id: `e-${Date.now()}`, classId, date: newEventDate, period: newEventPeriod, title: newEventType === 'extra' ? '보강 수업' : newEventTitle, type: newEventType };
+    const newEvent: ClassEvent = { id: initial?.id || `e-${Date.now()}`, classId, date: newEventDate, period: newEventPeriod, title: newEventType === 'extra' ? '보강 수업' : newEventTitle, type: newEventType };
     onAdd(newEvent);
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 dark:bg-gray-900/70 backdrop-blur-sm">
       <div className="bg-white dark:bg-slate-800 w-full max-w-sm rounded-3xl shadow-xl p-6 md:p-8 animate-in zoom-in-95 border border-slate-100 dark:border-slate-700">
-        <h3 className="text-xl font-bold mb-1 text-gray-900 dark:text-white">일정 변경 등록</h3>
-        <p className="text-orange-600 dark:text-orange-400 font-bold mb-5 text-sm">[{className}] 전용</p>
+        <h3 className="text-xl font-bold mb-1 text-gray-900 dark:text-white">{isEdit ? '일정 변경 수정' : '일정 변경 등록'}</h3>
+        <p className="text-orange-600 dark:text-orange-400 font-bold mb-1 text-sm">[{className}] 전용</p>
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-5">결강·내용 변경은 해당 학급 수업계획서의 날짜에 맞는 위치에 자동 반영됩니다.</p>
         {eventError && <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm rounded-lg font-bold">{eventError}</div>}
         <div className="space-y-4 text-sm">
           <div className="flex gap-1.5 bg-slate-100 dark:bg-slate-900 p-1.5 rounded-xl">
@@ -2729,6 +3193,9 @@ function SettingsPage() {
   const [isClassModalOpen, setClassModalOpen] = useState(false);
   const [isClassManageOpen, setClassManageOpen] = useState(false);
   const [isEventModalOpen, setEventModalOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<ClassEvent | null>(null);
+  const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
+  const [expandedHolidayKey, setExpandedHolidayKey] = useState<string | null>(null);
   const [isHolidayModalOpen, setHolidayModalOpen] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState<{ initial: HolidayModalInitial; keys: Set<string> } | null>(null);
   const [classToDelete, setClassToDelete] = useState<ClassSchedule | null>(null);
@@ -2820,8 +3287,41 @@ function SettingsPage() {
     }
   };
 
-  const handleAddEvent = async (newEvent: ClassEvent) => { try { await updateEvents([...events, newEvent]); setEventModalOpen(false); addToast('일정이 등록되었습니다.', 'success'); } catch { addToast('일정 등록에 실패했습니다.'); } };
-  const handleDeleteEvent = async (id: string) => { try { await updateEvents(events.filter(ev => ev.id !== id)); addToast('삭제되었습니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
+  // 등록/수정된 개별 일정이 수업계획서의 어디에 반영됐는지 알려주는 안내 문구
+  const describePlanImpact = (nextEvents: ClassEvent[], ev: ClassEvent): string => {
+    if (!PLAN_EVENT_TYPES.includes(ev.type)) return '';
+    const cls = classes.find(c => c.classId === ev.classId);
+    if (!cls) return '';
+    const pos = locateEventInPlan(lessonPlans, cls, holidays, nextEvents, ev);
+    if (!pos) return ' (연결된 수업계획서 없음)';
+    return pos.beyondPlan
+      ? ` (${pos.planName} 마지막에 기록 — 차시를 더 입력하면 자동 정렬)`
+      : ` (${pos.planName} ${pos.afterOrder}차시 뒤에 반영)`;
+  };
+
+  const handleAddEvent = async (newEvent: ClassEvent) => {
+    const isEdit = events.some(ev => ev.id === newEvent.id);
+    const nextEvents = isEdit ? events.map(ev => ev.id === newEvent.id ? newEvent : ev) : [...events, newEvent];
+    try {
+      await updateEvents(nextEvents);
+      setEventModalOpen(false);
+      setEditingEvent(null);
+      addToast(`${isEdit ? '일정이 수정되었습니다.' : '일정이 등록되었습니다.'}${describePlanImpact(nextEvents, newEvent)}`, 'success');
+    } catch { addToast(isEdit ? '일정 수정에 실패했습니다.' : '일정 등록에 실패했습니다.'); }
+  };
+  const handleDeleteEvent = async (id: string) => { try { await updateEvents(events.filter(ev => ev.id !== id)); addToast('삭제되었습니다. 수업계획서에도 반영됩니다.', 'success'); } catch { addToast('삭제에 실패했습니다.'); } };
+
+  // 공휴일 수동 재등록 (자동 등록분을 지웠거나 새 학년도를 준비할 때)
+  const handleSeedHolidays = async () => {
+    const thisYear = new Date().getFullYear();
+    const years = [thisYear, thisYear + 1].filter(y => KR_PUBLIC_HOLIDAYS[y]);
+    const additions = pickMissingAutoHolidays(holidays, years);
+    if (additions.length === 0) { addToast(`${years.join(', ')}년 공휴일이 이미 모두 등록되어 있습니다.`, 'success'); return; }
+    try {
+      await updateHolidays([...holidays, ...additions].sort((a, b) => a.date.localeCompare(b.date)));
+      addToast(`공휴일 ${additions.length}일을 휴강으로 등록했습니다.`, 'success');
+    } catch { addToast('공휴일 등록에 실패했습니다.'); }
+  };
   const handleAddHoliday = async (newHolidays: Holiday[]) => {
     // 수정 모드면 기존 그룹의 항목들을 먼저 제거하고 새로 등록
     const removeKeys = editingHoliday?.keys;
@@ -2886,7 +3386,7 @@ function SettingsPage() {
   return (
     <div className="p-4 md:p-6 h-full flex flex-col animate-in fade-in duration-500 overflow-hidden bg-white dark:bg-slate-900">
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 shrink-0 bg-slate-100/50 dark:bg-slate-800/50 p-4 md:p-6 rounded-2xl md:rounded-3xl gap-4">
-        <div><h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">학급 및 일정 설정</h1><p className="text-xs md:text-sm text-gray-500 dark:text-gray-400 mt-1 md:mt-2">운영 학급과 예외 일정을 관리합니다.</p></div>
+        <div><h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">학급 및 일정 설정</h1><p className="text-xs md:text-sm text-gray-500 dark:text-gray-400 mt-1 md:mt-2">운영 학급과 예외 일정을 관리합니다. 일정 카드를 누르면 교시·적용 학급 등 상세 정보가 열립니다.</p></div>
         <div className="grid grid-cols-2 gap-2 w-full md:w-auto">
           <button onClick={() => setClassModalOpen(true)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-4 py-3 rounded-2xl text-sm font-black hover:bg-slate-50 dark:hover:bg-slate-800 shadow-sm transition-colors flex flex-col items-start gap-1 min-w-[120px]">
             <span className="text-lg leading-none">＋</span>
@@ -3015,40 +3515,64 @@ function SettingsPage() {
               <div className="bg-slate-100 dark:bg-slate-800/50 p-5 md:p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col">
                 <div className="flex justify-between items-center mb-4 shrink-0">
                   <h2 className="text-base font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2"><span className="w-1.5 h-4 rounded-full bg-orange-400"></span>{activeClass.className} 개별 일정</h2>
-                  <button onClick={() => setEventModalOpen(true)} className="bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-orange-200">+ 일정 등록</button>
+                  <button onClick={() => { setEditingEvent(null); setEventModalOpen(true); }} className="bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-orange-200">+ 일정 등록</button>
                 </div>
-                <div className="space-y-3 flex-1 overflow-y-auto pr-1">
-                  {activeClassEvents.length > 0 ? activeClassEvents.map(e => (
-                    <div key={e.id} className={`flex flex-col gap-1.5 p-4 rounded-xl border shadow-sm ${
-                      e.type === 'extra' ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-100 dark:border-indigo-800/60' 
-                      : (e.type === 'replace' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-800/60'
-                      : 'bg-white dark:bg-slate-800 border-orange-200 dark:border-orange-800/60')
-                    }`}>
-                      <div className="flex justify-between items-center">
-                        <span className={`text-xs font-black ${
-                          e.type === 'extra' ? 'text-indigo-800 dark:text-indigo-300' 
-                          : (e.type === 'replace' ? 'text-emerald-800 dark:text-emerald-300' 
-                          : 'text-orange-800 dark:text-orange-300')
-                        }`}>{e.date}</span>
-                        <div className="flex gap-1.5">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
-                            e.type === 'extra' ? 'bg-indigo-200 dark:bg-indigo-800/60 text-indigo-900 dark:text-indigo-200' 
-                            : (e.type === 'replace' ? 'bg-emerald-200 dark:bg-emerald-800/60 text-emerald-900 dark:text-emerald-200'
-                            : 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-200')
-                          }`}>{e.period}교시</span>
-                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md text-white ${
-                            e.type === 'extra' ? 'bg-indigo-500' : (e.type === 'replace' ? 'bg-emerald-500' : 'bg-orange-500')
-                          }`}>{e.type === 'extra' ? '보강' : (e.type === 'replace' ? '내용 변경' : '결강')}</span>
-                        </div>
+                <div className="space-y-2 flex-1 overflow-y-auto pr-1">
+                  {activeClassEvents.length > 0 ? activeClassEvents.map(e => {
+                    const isOpen = expandedEventId === e.id;
+                    const accent = e.type === 'extra' ? 'indigo' : (e.type === 'replace' ? 'emerald' : 'orange');
+                    const typeLabel = e.type === 'extra' ? '보강' : (e.type === 'replace' ? '내용 변경' : '결강');
+                    return (
+                      <div key={e.id} className={`rounded-xl border shadow-sm overflow-hidden ${
+                        accent === 'indigo' ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-100 dark:border-indigo-800/60'
+                        : (accent === 'emerald' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-800/60'
+                        : 'bg-white dark:bg-slate-800 border-orange-200 dark:border-orange-800/60')
+                      }`}>
+                        {/* 접힌 상태: 날짜 + 내용만 */}
+                        <button
+                          aria-expanded={isOpen}
+                          aria-label={`${e.date} ${e.title} 상세 보기`}
+                          onClick={() => setExpandedEventId(isOpen ? null : e.id)}
+                          className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-black/[0.03] dark:hover:bg-white/[0.04] transition-colors"
+                        >
+                          <span className={`text-xs font-black shrink-0 ${
+                            accent === 'indigo' ? 'text-indigo-800 dark:text-indigo-300'
+                            : (accent === 'emerald' ? 'text-emerald-800 dark:text-emerald-300'
+                            : 'text-orange-800 dark:text-orange-300')
+                          }`}>{fmtMD(e.date)}</span>
+                          <span className="text-sm font-bold text-slate-700 dark:text-slate-100 truncate flex-1">{e.title}</span>
+                          <span className={`text-[10px] font-black shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''} text-slate-400`}>▶</span>
+                        </button>
+
+                        {/* 펼친 상태: 교시·유형 등 상세 */}
+                        {isOpen && (
+                          <div className="px-4 pb-3 pt-1 border-t border-black/5 dark:border-white/10 flex flex-col gap-2">
+                            <div className="flex flex-wrap gap-1.5">
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/60 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">{e.date}</span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                                accent === 'indigo' ? 'bg-indigo-200 dark:bg-indigo-800/60 text-indigo-900 dark:text-indigo-200'
+                                : (accent === 'emerald' ? 'bg-emerald-200 dark:bg-emerald-800/60 text-emerald-900 dark:text-emerald-200'
+                                : 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-200')
+                              }`}>{e.period}교시</span>
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-md text-white ${
+                                accent === 'indigo' ? 'bg-indigo-500' : (accent === 'emerald' ? 'bg-emerald-500' : 'bg-orange-500')
+                              }`}>{typeLabel}</span>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">{activeClass.className}</span>
+                            </div>
+                            {PLAN_EVENT_TYPES.includes(e.type) && (
+                              <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                                수업계획서 반영 위치{describePlanImpact(events, e) || ' — 계산할 수 없음'}
+                              </p>
+                            )}
+                            <div className="flex justify-end gap-2">
+                              <button aria-label="일정 수정" onClick={() => { setEditingEvent(e); setEventModalOpen(true); }} className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline">수정</button>
+                              <button aria-label="일정 삭제" onClick={() => handleDeleteEvent(e.id)} className="text-xs font-bold text-gray-400 hover:text-red-500">삭제</button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <span className={`text-sm font-bold ${
-                        e.type === 'extra' ? 'text-indigo-900 dark:text-indigo-100' 
-                        : (e.type === 'replace' ? 'text-emerald-900 dark:text-emerald-100'
-                        : 'text-slate-700 dark:text-slate-200')
-                      }`}>{e.title}</span>
-                      <button aria-label="일정 삭제" onClick={() => handleDeleteEvent(e.id)} className="text-xs text-gray-400 hover:text-red-500 text-right mt-1 font-bold">삭제</button>
-                    </div>
-                  )) : (
+                    );
+                  }) : (
                     <div className="flex items-center justify-center h-full min-h-[80px] border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl"><p className="text-xs text-slate-400 dark:text-slate-500 font-bold">등록된 개별 일정이 없습니다.</p></div>
                   )}
                 </div>
@@ -3061,42 +3585,64 @@ function SettingsPage() {
 
         <section className="bg-rose-50/50 dark:bg-rose-900/10 p-5 md:p-6 rounded-3xl border border-rose-100 dark:border-rose-900/30 shrink-0">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
-            <h2 className="text-sm font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2"><span className="w-1.5 h-4 bg-rose-400 rounded-full"></span>학교 공통 일정 (전체 학급)</h2>
-            <button onClick={() => { setEditingHoliday(null); setHolidayModalOpen(true); }} className="bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-rose-200">+ 공통 일정 등록</button>
+            <div>
+              <h2 className="text-sm font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2"><span className="w-1.5 h-4 bg-rose-400 rounded-full"></span>학교 공통 일정 (전체 학급)</h2>
+              <p className="text-[11px] text-rose-400 dark:text-rose-500 font-bold mt-1 ml-3.5">평일 공휴일은 휴강으로 자동 등록됩니다.</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={handleSeedHolidays} className="bg-white dark:bg-slate-800 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-rose-50 dark:hover:bg-rose-900/20">공휴일 불러오기</button>
+              <button onClick={() => { setEditingHoliday(null); setHolidayModalOpen(true); }} className="bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-rose-200">+ 공통 일정 등록</button>
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
             {holidayGroups.length > 0 ? holidayGroups.map((g, i) => {
               const dateLabel = g.first === g.last ? fmtMD(g.first) : `${fmtMD(g.first)} ~ ${fmtMD(g.last)}`;
               const dayCount = g.sortedDates.length;
+              const gKey = `${g.title}__${g.isHoliday ? 1 : 0}__${g.first}`;
+              const isOpen = expandedHolidayKey === gKey;
+              const isAuto = Array.from(g.keys).some(k => isAutoHolidayId(k));
               return (
-                <div key={i} className="flex flex-col gap-2 bg-white/90 dark:bg-slate-800/80 py-3 px-4 rounded-2xl border border-rose-100 dark:border-rose-900/50 shadow-sm">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-md font-bold ${g.isHoliday ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'}`}>{g.isHoliday ? '휴강' : '일정'}</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate">{g.title}</span>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button aria-label="이 일정 수정" onClick={() => openEditHoliday(g)} className="text-xs text-gray-400 hover:text-indigo-500 font-bold p-1">✎</button>
-                      <button aria-label="이 일정 삭제" onClick={() => handleDeleteHolidayKeys(g.keys)} className="text-sm text-gray-400 hover:text-red-500 font-black p-1">✕</button>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap text-xs">
-                    <span className="font-bold text-rose-700 dark:text-rose-300">📅 {dateLabel}</span>
-                    {dayCount > 1 && <span className="text-slate-400 dark:text-slate-500 font-bold">({dayCount}일간)</span>}
-                  </div>
-                  {g.slotList.length > 0 ? (
-                    <div className="flex flex-col gap-1.5">
-                      {g.slotList.map((s, si) => (
-                        <div key={si} className="flex items-center gap-1.5 flex-wrap">
-                          {s.periods.length > 0 && <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">{s.periods.join(',')}교시</span>}
-                          <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
-                            {s.classIds.length > 0 ? s.classIds.map(id => classes.find(c => c.classId === id)?.className).filter(Boolean).join(', ') : '전체 학급'}
-                          </span>
+                <div key={i} className="bg-white/90 dark:bg-slate-800/80 rounded-2xl border border-rose-100 dark:border-rose-900/50 shadow-sm overflow-hidden self-start">
+                  {/* 접힌 상태: 날짜 + 내용만 */}
+                  <button
+                    aria-expanded={isOpen}
+                    aria-label={`${g.title} 상세 보기`}
+                    onClick={() => setExpandedHolidayKey(isOpen ? null : gKey)}
+                    className="w-full flex items-center gap-2 py-3 px-4 text-left hover:bg-rose-50/60 dark:hover:bg-rose-900/10 transition-colors"
+                  >
+                    <span className="shrink-0 text-xs font-black text-rose-700 dark:text-rose-300">{dateLabel}</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate flex-1">{g.title}</span>
+                    <span className={`text-[10px] font-black shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''} text-slate-400`}>▶</span>
+                  </button>
+
+                  {/* 펼친 상태: 유형 · 기간 · 교시 · 적용 학급 */}
+                  {isOpen && (
+                    <div className="px-4 pb-3 pt-1 border-t border-rose-100/70 dark:border-rose-900/40 flex flex-col gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold ${g.isHoliday ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'}`}>{g.isHoliday ? '휴강' : '일정'}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">{g.first}{g.first !== g.last ? ` ~ ${g.last}` : ''}</span>
+                        {dayCount > 1 && <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400">{dayCount}일간</span>}
+                        {isAuto && <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">공휴일 자동 등록</span>}
+                      </div>
+                      {g.slotList.length > 0 ? (
+                        <div className="flex flex-col gap-1.5">
+                          {g.slotList.map((s, si) => (
+                            <div key={si} className="flex items-center gap-1.5 flex-wrap">
+                              {s.periods.length > 0 && <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">{s.periods.join(',')}교시</span>}
+                              <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
+                                {s.classIds.length > 0 ? s.classIds.map(id => classes.find(c => c.classId === id)?.className).filter(Boolean).join(', ') : '전체 학급'}
+                              </span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 w-fit">전체 학급 · 하루 종일</span>
+                      )}
+                      <div className="flex justify-end gap-2">
+                        <button aria-label="이 일정 수정" onClick={() => openEditHoliday(g)} className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline">수정</button>
+                        <button aria-label="이 일정 삭제" onClick={() => handleDeleteHolidayKeys(g.keys)} className="text-xs font-bold text-gray-400 hover:text-red-500">삭제</button>
+                      </div>
                     </div>
-                  ) : (
-                    <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 w-fit">전체 학급 · 하루 종일</span>
                   )}
                 </div>
               );
@@ -3117,7 +3663,7 @@ function SettingsPage() {
       )}
       {isClassModalOpen && <ClassModal onClose={() => setClassModalOpen(false)} onAdd={handleAddClass} renderColorPicker={renderColorPicker} dayNames={dayNames} />}
       {isClassManageOpen && <ClassManageModal classes={classes} onClose={() => setClassManageOpen(false)} onEdit={(cls) => { setClassManageOpen(false); setSelectedTabClassId(cls.classId); startEditClass(cls); }} onDelete={(cls) => setClassToDelete(cls)} />}
-      {isEventModalOpen && activeClass && <EventModal classId={activeClass.classId} className={activeClass.className} onClose={() => setEventModalOpen(false)} onAdd={handleAddEvent} />}
+      {isEventModalOpen && activeClass && <EventModal classId={activeClass.classId} className={activeClass.className} onClose={() => { setEventModalOpen(false); setEditingEvent(null); }} onAdd={handleAddEvent} initial={editingEvent || undefined} />}
       {isHolidayModalOpen && <HolidayModal onClose={() => { setHolidayModalOpen(false); setEditingHoliday(null); }} onAdd={handleAddHoliday} classes={classes} initial={editingHoliday?.initial} />}
     </div>
   );
@@ -3172,6 +3718,9 @@ export default function App() {
   const [menuOrderState, setMenuOrderState] = useState<string[]>(() => loadFromLocal('menuOrder', DEFAULT_MENU_ORDER));
   const [scoreLogsState, setScoreLogsState] = useState<ScoreLog[]>(() => loadFromLocal('scoreLogs', []));
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  // Firebase 첫 스냅샷 수신 여부 (공휴일 자동 등록을 서버 데이터 도착 후로 미루기 위함)
+  const [cloudSynced, setCloudSynced] = useState(!isFirebaseEnabled);
+  const autoHolidaySeededRef = useRef(false);
 
   // App 레벨 pending ref: 점수 디바운스 저장 중인지 snapshot이 확인할 수 있도록
   const appPendingScoreRef = useRef<{
@@ -3291,7 +3840,8 @@ export default function App() {
         setDoc(docRef, { lessons: MOCK_LESSONS, lessonPlans: DEFAULT_LESSON_PLANS, classes: MOCK_SCHEDULES, holidays: MOCK_HOLIDAYS, events: [], records: [], tasks: MOCK_TASKS, profile: DEFAULT_PROFILE, menuOrder: DEFAULT_MENU_ORDER, scoreLogs: [] }, { merge: true });
       }
       setIsLoaded(true);
-    }, () => { setIsLoaded(true); });
+      setCloudSynced(true);
+    }, () => { setIsLoaded(true); setCloudSynced(true); });
 
     return () => unsubscribe();
   }, [user]);
@@ -3323,6 +3873,46 @@ export default function App() {
     goToPage: (page, params) => { setActivePage(page); setPageParams(params); },
     pageParams,
   };
+
+  // ==========================================
+  // 공휴일 자동 휴강 등록
+  // 학년도(현재 연도 ~ 다음 연도)와 학급 시작일이 속한 연도의 평일 공휴일을
+  // "하루 종일 휴강" 공통 일정으로 한 번만 자동 등록한다.
+  // 이미 등록했던 연도는 profile.autoHolidayYears 에 기록되므로,
+  // 사용자가 지운 공휴일이 다시 살아나지 않는다. (설정 > 공휴일 불러오기 로 재등록 가능)
+  // ==========================================
+  useEffect(() => {
+    if (!isLoaded || !cloudSynced || autoHolidaySeededRef.current) return;
+    if (isFirebaseEnabled && !user) return;
+
+    const thisYear = new Date().getFullYear();
+    const candidateYears = new Set<number>([thisYear, thisYear + 1]);
+    classesState.forEach(c => {
+      if (c.startDate) candidateYears.add(Number(c.startDate.slice(0, 4)));
+      (c.semesterSchedules || []).forEach(ss => { if (ss.startDate) candidateYears.add(Number(ss.startDate.slice(0, 4))); });
+    });
+
+    const done = profileState.autoHolidayYears || [];
+    const targetYears = Array.from(candidateYears)
+      .filter(y => !!KR_PUBLIC_HOLIDAYS[y] && !done.includes(y))
+      .sort((a, b) => a - b);
+    if (targetYears.length === 0) { autoHolidaySeededRef.current = true; return; }
+
+    autoHolidaySeededRef.current = true;
+    const additions = pickMissingAutoHolidays(holidaysState, targetYears);
+    (async () => {
+      try {
+        if (additions.length > 0) {
+          await contextValue.updateHolidays(
+            [...holidaysState, ...additions].sort((a, b) => a.date.localeCompare(b.date))
+          );
+        }
+        await contextValue.updateProfile({ ...profileState, autoHolidayYears: [...done, ...targetYears] });
+      } catch {
+        autoHolidaySeededRef.current = false; // 실패 시 다음 렌더에서 재시도
+      }
+    })();
+  }, [isLoaded, cloudSynced, user, classesState, holidaysState, profileState]);
 
   const NAV_ITEMS_CONFIG: Record<string, { id: string; label: string; icon: React.ReactNode }> = {
     manage:   { id: 'manage',   label: '주간 진도표',   icon: <IconCalendar /> },
@@ -3488,7 +4078,8 @@ export default function App() {
             currentProfile={profileState}
             onClose={() => setIsProfileModalOpen(false)}
             onSave={(newProfile) => {
-              contextValue.updateProfile(newProfile);
+              // 공휴일 자동 등록 기록(autoHolidayYears)은 유지
+              contextValue.updateProfile({ ...profileState, ...newProfile });
               setIsProfileModalOpen(false);
             }}
           />
