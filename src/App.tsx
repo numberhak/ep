@@ -374,15 +374,22 @@ function getPlanSegmentsForClass(
 }
 
 // 기간별 계획서를 이어붙여 한 학급의 전체 일정 생성 (각 구간은 자기 시작일~다음 구간 직전까지)
+// semesterEndExclusive: 학기 경계(예: 2학기 시작일). 마지막 구간이 이 날짜를 넘어가지 않도록 끊는다.
+// (1학기 차시가 2학기 날짜까지 흘러넘쳐 표시되는 문제 방지)
 function generateSegmentedSchedule(
   plans: LessonPlan[], semester: 1 | 2, cls: ClassSchedule,
-  holidays: Holiday[], events: ClassEvent[], viewEndDateStr: string
+  holidays: Holiday[], events: ClassEvent[], viewEndDateStr: string,
+  semesterEndExclusive?: string | null
 ): ScheduledItem[] {
   const segs = getPlanSegmentsForClass(plans, semester, cls);
   if (segs.length === 0) return [];
   const out: ScheduledItem[] = [];
   for (let i = 0; i < segs.length; i++) {
-    const endExclusive = i + 1 < segs.length ? segs[i + 1].start : null;
+    let endExclusive = i + 1 < segs.length ? segs[i + 1].start : null;
+    // 학기 경계가 있으면, 그보다 뒤로 넘어가는 구간 끝을 학기 경계로 당긴다.
+    if (semesterEndExclusive && (endExclusive === null || endExclusive > semesterEndExclusive)) {
+      endExclusive = semesterEndExclusive;
+    }
     out.push(...generateClassLessonSchedule(segs[i].lessons, cls, holidays, events, viewEndDateStr, segs[i].start, endExclusive));
   }
   return out;
@@ -1839,7 +1846,7 @@ function GroupBoard({ classId, members, groupScores, colorStyle, onUpdateScore, 
             </div>
           )}
 
-          {/* 모둠원 행 — 같은 번호는 같은 행. 번호는 각 칸 안에 표시한다. */}
+          {/* 모둠원 행 — 같은 번호는 같은 행. 번호 배지는 편집 중일 때만 칸 안에 표시한다. */}
           {Array.from({ length: rowCount }).map((_, ri) => (
             <div key={ri} className="grid gap-1.5 sm:gap-2 mt-1.5 sm:mt-2" style={gridTemplate}>
               {Array.from({ length: GROUP_COUNT }).map((_, gi) => {
@@ -1852,9 +1859,10 @@ function GroupBoard({ classId, members, groupScores, colorStyle, onUpdateScore, 
                   <span className="shrink-0 w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-slate-200/80 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-[9px] sm:text-[10px] font-black flex items-center justify-center">{ri + 1}</span>
                 );
                 if (!isEditing) {
+                  // 평소 화면에서는 칸 안의 번호를 숨긴다. 행 순서(ri)가 곧 번호이므로
+                  // 1행=1번, 2행=2번 배치는 그대로 유지된다.
                   return (
                     <div key={gi} className="flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2 py-2 rounded-xl bg-white/90 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 min-w-0">
-                      {numBadge}
                       <span className="truncate text-[11px] sm:text-xs md:text-sm font-bold text-slate-700 dark:text-slate-200">
                         {name || <span className="text-slate-300 dark:text-slate-600 font-normal">—</span>}
                       </span>
@@ -2395,10 +2403,12 @@ function ManagePage() {
       const effectiveSemester: 1 | 2 = semester === 2 && hasSem2Plan ? 2 : 1;
       // 2학기 시간표 시작일을 학급 시작일에 반영(시간표 전환용)
       const effectiveCls = effectiveSemester === 2 && sem2Schedule?.startDate ? { ...cls, startDate: sem2Schedule.startDate } : cls;
+      // 1학기 차시는 2학기 시작일에서 끊어 2학기 날짜로 흘러넘치지 않게 한다.
+      const semesterEndExclusive = effectiveSemester === 1 && hasSem2 ? sem2Schedule!.startDate : null;
       // 기간별 계획서를 적용. 계획서가 전혀 없으면 레거시 lessons 폴백.
-      let clsSchedule = generateSegmentedSchedule(plans, effectiveSemester, effectiveCls, holidays, events, weekEndDateStr);
+      let clsSchedule = generateSegmentedSchedule(plans, effectiveSemester, effectiveCls, holidays, events, weekEndDateStr, semesterEndExclusive);
       if (clsSchedule.length === 0 && getPlanSegmentsForClass(plans, effectiveSemester, effectiveCls).length === 0) {
-        clsSchedule = generateClassLessonSchedule(lessons, effectiveCls, holidays, events, weekEndDateStr);
+        clsSchedule = generateClassLessonSchedule(lessons, effectiveCls, holidays, events, weekEndDateStr, undefined, semesterEndExclusive);
       }
       clsSchedule.forEach(item => allItems.push({ item, classInfo: cls }));
     });
