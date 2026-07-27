@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, createContext, useContext 
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged } from 'firebase/auth';
 import type { User } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
 // ==========================================
 // Firebase Initialization
@@ -65,6 +65,11 @@ const setLocalOwner = (uid: string) => {
 //  누구나 같은 문서를 읽고 쓸 수 있었다. 학생 이름이 들어가므로 uid로 격리한다.)
 const userDocRef = (uid: string) =>
   doc(db!, 'artifacts', appId, 'users', uid, 'appState', 'shared');
+
+// 격리 이전에 쓰던 공용 문서. 첫 로그인 시 여기서 데이터를 한 번 옮겨오기 위해서만 참조한다.
+// 이관이 끝나고 보안 규칙을 게시하면 이 경로는 더 이상 읽히지 않는다(읽기 실패는 무시).
+const legacySharedDocRef = () =>
+  doc(db!, 'artifacts', appId, 'public', 'data', 'appState', 'shared');
 
 // ==========================================
 // 1. Data Models (TypeScript Interfaces)
@@ -3860,6 +3865,16 @@ export default function App() {
     getRedirectResult(auth).catch(() => {});
 
     const unsubscribe = onAuthStateChanged(auth, (u) => {
+      // 예전 버전에서 만들어진 익명 세션이 남아 있으면 로그인된 것으로 취급하지 않는다.
+      // (익명 uid는 기기마다 달라서 이 데이터는 다른 기기에서 열 수 없다)
+      if (u && u.isAnonymous) {
+        signOut(auth).catch(() => {});
+        setUser(null);
+        setAuthChecking(false);
+        setIsLoaded(true);
+        setCloudSynced(true);
+        return;
+      }
       setUser(u);
       setAuthChecking(false);
       if (!u) { setIsLoaded(true); setCloudSynced(true); }
@@ -3969,21 +3984,33 @@ export default function App() {
         saveToLocal('scoreLogs', sl);
       } else {
         // 이 계정의 문서가 아직 없는 경우 = 첫 로그인.
-        // 이 기기의 로컬 캐시에 기존 데이터가 있으면 그대로 올려서 옮긴다(기존 공용 문서에서의 이관).
-        // 캐시가 없으면 기본값으로 시작한다.
-        setDoc(docRef, {
-          lessons:     loadFromLocal('lessons', MOCK_LESSONS),
-          lessonPlans: loadFromLocal('lessonPlans', DEFAULT_LESSON_PLANS),
-          classes:     encodeClassesForFirestore(loadFromLocal('classes', MOCK_SCHEDULES)),
-          holidays:    loadFromLocal('holidays', MOCK_HOLIDAYS),
-          events:      loadFromLocal('events', []),
-          records:     loadFromLocal('records', []),
-          tasks:       loadFromLocal('tasks', MOCK_TASKS),
-          taskNotes:   loadFromLocal('taskNotes', []),
-          profile:     loadFromLocal('profile', DEFAULT_PROFILE),
-          menuOrder:   loadFromLocal('menuOrder', DEFAULT_MENU_ORDER),
-          scoreLogs:   loadFromLocal('scoreLogs', []),
-        }, { merge: true });
+        // 1) 격리 이전 공용 문서가 남아 있으면 그 내용을 그대로 옮겨온다.
+        // 2) 없으면 이 기기의 로컬 캐시를 쓴다.
+        // 3) 둘 다 없으면 기본값으로 시작한다.
+        (async () => {
+          let seed: any = null;
+          try {
+            const legacy = await getDoc(legacySharedDocRef());
+            if (legacy.exists()) seed = legacy.data();
+          } catch (e) { /* 보안 규칙으로 막혔거나 이미 삭제됨 → 아래 단계로 */ }
+
+          if (!seed) {
+            seed = {
+              lessons:     loadFromLocal('lessons', MOCK_LESSONS),
+              lessonPlans: loadFromLocal('lessonPlans', DEFAULT_LESSON_PLANS),
+              classes:     encodeClassesForFirestore(loadFromLocal('classes', MOCK_SCHEDULES)),
+              holidays:    loadFromLocal('holidays', MOCK_HOLIDAYS),
+              events:      loadFromLocal('events', []),
+              records:     loadFromLocal('records', []),
+              tasks:       loadFromLocal('tasks', MOCK_TASKS),
+              taskNotes:   loadFromLocal('taskNotes', []),
+              profile:     loadFromLocal('profile', DEFAULT_PROFILE),
+              menuOrder:   loadFromLocal('menuOrder', DEFAULT_MENU_ORDER),
+              scoreLogs:   loadFromLocal('scoreLogs', []),
+            };
+          }
+          try { await setDoc(docRef, seed, { merge: true }); } catch (e) {}
+        })();
       }
       setIsLoaded(true);
       setCloudSynced(true);
