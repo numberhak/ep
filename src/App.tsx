@@ -3890,12 +3890,27 @@ export default function App() {
       await signInWithPopup(auth, provider);
     } catch (err: any) {
       const code = err?.code || '';
+      console.error('[로그인 실패]', code, err?.message, err);
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
       // 팝업을 못 여는 환경이면 리디렉션 방식으로 한 번 더 시도
       if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
         try { await signInWithRedirect(auth, provider); return; } catch (e) {}
       }
-      setAuthError('로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+      // 설정 문제는 원인별로 무엇을 고쳐야 하는지 그대로 보여준다.
+      const host = typeof window !== 'undefined' ? window.location.hostname : '';
+      const messages: Record<string, string> = {
+        'auth/unauthorized-domain':
+          `이 주소(${host})가 Firebase에 등록돼 있지 않습니다.\nAuthentication → Settings → 승인된 도메인에 "${host}" 를 추가하세요.`,
+        'auth/operation-not-allowed':
+          'Google 로그인이 아직 켜져 있지 않습니다.\nAuthentication → Sign-in method 에서 Google을 사용 설정하세요.',
+        'auth/configuration-not-found':
+          'Firebase Authentication 설정을 찾을 수 없습니다.\n콘솔에서 Authentication을 시작했는지, Google 공급업체를 저장했는지 확인하세요.',
+        'auth/invalid-api-key':
+          'Firebase API 키가 올바르지 않습니다. 배포 환경변수(VITE_FIREBASE_*)를 확인하세요.',
+        'auth/internal-error':
+          '설정 오류로 로그인이 중단됐습니다.\nauthDomain 환경변수와 승인된 도메인 설정을 확인하세요.',
+      };
+      setAuthError(messages[code] || `로그인에 실패했습니다.\n오류 코드: ${code || '알 수 없음'}`);
     }
   };
 
@@ -4147,7 +4162,14 @@ export default function App() {
           </button>
 
           {authError && (
-            <div className="mt-4 text-xs font-bold text-rose-600 dark:text-rose-400">{authError}</div>
+            <div className="mt-4 w-full text-left text-xs font-bold text-rose-600 dark:text-rose-400 whitespace-pre-line bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800/50 rounded-xl p-3 leading-relaxed">
+              {authError}
+              <div className="mt-2 pt-2 border-t border-rose-200 dark:border-rose-800/50 font-medium text-rose-500 dark:text-rose-400/80">
+                현재 주소: {typeof window !== 'undefined' ? window.location.hostname : '-'}<br />
+                authDomain: {firebaseConfig.authDomain || '(설정 안 됨)'}<br />
+                projectId: {firebaseConfig.projectId || '(설정 안 됨)'}
+              </div>
+            </div>
           )}
         </div>
       </div>
