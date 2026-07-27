@@ -558,15 +558,15 @@ function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-interface ConfirmModalProps { message: string; onConfirm: () => void; onCancel: () => void; }
-function ConfirmModal({ message, onConfirm, onCancel }: ConfirmModalProps) {
+interface ConfirmModalProps { message: string; confirmLabel?: string; onConfirm: () => void; onCancel: () => void; }
+function ConfirmModal({ message, confirmLabel = '삭제', onConfirm, onCancel }: ConfirmModalProps) {
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-gray-900/40 dark:bg-gray-900/70 backdrop-blur-sm px-4">
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-6 max-w-xs w-full animate-in zoom-in-95 border border-slate-100 dark:border-slate-700">
         <p className="text-base font-bold text-gray-800 dark:text-gray-100 mb-6 leading-relaxed whitespace-pre-line">{message}</p>
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="px-4 py-2.5 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200 rounded-xl text-sm font-bold hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors focus:outline-none">취소</button>
-          <button onClick={onConfirm} className="px-4 py-2.5 bg-rose-600 dark:bg-rose-500 text-white rounded-xl text-sm font-bold hover:bg-rose-700 dark:hover:bg-rose-600 transition-colors focus:outline-none">삭제</button>
+          <button onClick={onConfirm} className="px-4 py-2.5 bg-rose-600 dark:bg-rose-500 text-white rounded-xl text-sm font-bold hover:bg-rose-700 dark:hover:bg-rose-600 transition-colors focus:outline-none">{confirmLabel}</button>
         </div>
       </div>
     </div>
@@ -3779,10 +3779,11 @@ function SettingsPage() {
 // ==========================================
 // Profile Modal Component
 // ==========================================
-interface ProfileModalProps { currentProfile: UserProfile; onClose: () => void; onSave: (profile: UserProfile) => void; }
-function ProfileModal({ currentProfile, onClose, onSave }: ProfileModalProps) {
+interface ProfileModalProps { currentProfile: UserProfile; accountEmail?: string | null; onSignOut?: () => void; onClose: () => void; onSave: (profile: UserProfile) => void; }
+function ProfileModal({ currentProfile, accountEmail, onSignOut, onClose, onSave }: ProfileModalProps) {
   const [name, setName] = useState(currentProfile.name);
   const [subject, setSubject] = useState(currentProfile.subject);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 dark:bg-gray-900/70 backdrop-blur-sm animate-in fade-in">
@@ -3792,6 +3793,32 @@ function ProfileModal({ currentProfile, onClose, onSave }: ProfileModalProps) {
           <div><label className="block font-bold text-gray-700 dark:text-gray-300 mb-2">선생님 이름</label><input type="text" aria-label="선생님 이름" value={name} onChange={e => setName(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold" /></div>
           <div><label className="block font-bold text-gray-700 dark:text-gray-300 mb-2">담당 과목/역할</label><input type="text" aria-label="담당 과목 또는 역할" value={subject} onChange={e => setSubject(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="예: 국어 담당, 3학년 부장 등" /></div>
         </div>
+        {onSignOut && (
+          <div className="mt-6 pt-5 border-t border-slate-200 dark:border-slate-700">
+            <div className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5">로그인 계정</div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate" title={accountEmail || ''}>
+                {accountEmail || '(이메일 정보 없음)'}
+              </div>
+              <button
+                onClick={() => setConfirmSignOut(true)}
+                className="shrink-0 text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+              >
+                로그아웃
+              </button>
+            </div>
+          </div>
+        )}
+
+        {confirmSignOut && onSignOut && (
+          <ConfirmModal
+            message={'로그아웃할까요?\n\n기록은 클라우드에 안전하게 남아 있으며,\n다시 로그인하면 그대로 복원됩니다.'}
+            confirmLabel="로그아웃"
+            onConfirm={() => { setConfirmSignOut(false); onSignOut(); }}
+            onCancel={() => setConfirmSignOut(false)}
+          />
+        )}
+
         <div className="mt-8 flex justify-end gap-3">
           <button onClick={onClose} className="px-5 py-3 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200 rounded-xl text-sm font-bold">취소</button>
           <button onClick={() => onSave({ name, subject })} className="px-5 py-3 bg-indigo-600 dark:bg-indigo-500 text-white rounded-xl text-sm font-bold shadow-sm">저장하기</button>
@@ -3828,6 +3855,7 @@ export default function App() {
   const [menuOrderState, setMenuOrderState] = useState<string[]>(() => loadFromLocal('menuOrder', DEFAULT_MENU_ORDER));
   const [scoreLogsState, setScoreLogsState] = useState<ScoreLog[]>(() => loadFromLocal('scoreLogs', []));
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   // Firebase 첫 스냅샷 수신 여부 (공휴일 자동 등록을 서버 데이터 도착 후로 미루기 위함)
   const [cloudSynced, setCloudSynced] = useState(!isFirebaseEnabled);
   const autoHolidaySeededRef = useRef(false);
@@ -4268,7 +4296,7 @@ export default function App() {
                   <div className="mt-2 px-1">
                     <div className="text-[10px] text-slate-500 font-medium truncate" title={user.email || ''}>{user.email}</div>
                     <button
-                      onClick={handleSignOut}
+                      onClick={() => setConfirmSignOut(true)}
                       className="mt-1 text-[11px] font-bold text-slate-400 hover:text-rose-400 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
                     >
                       로그아웃
@@ -4297,21 +4325,9 @@ export default function App() {
                 <span className="text-lg font-black tracking-tight">CE수첩</span>
                 <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`}></span>
               </button>
-              <div className="flex items-center gap-2">
-                <button aria-label="프로필 설정 수정" onClick={() => setIsProfileModalOpen(true)} className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-sm uppercase focus:outline-none shadow-inner">
-                  {profileState.name.charAt(0) || 'U'}
-                </button>
-                {isFirebaseEnabled && user && (
-                  <button
-                    aria-label="로그아웃"
-                    title={user.email || '로그아웃'}
-                    onClick={handleSignOut}
-                    className="text-[11px] font-bold text-slate-400 hover:text-rose-400 transition-colors focus:outline-none px-1"
-                  >
-                    로그아웃
-                  </button>
-                )}
-              </div>
+              <button aria-label="프로필 및 계정 설정" onClick={() => setIsProfileModalOpen(true)} className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-sm uppercase focus:outline-none shadow-inner">
+                {profileState.name.charAt(0) || 'U'}
+              </button>
             </header>
             <main className="flex-1 overflow-hidden relative bg-gray-50 dark:bg-slate-900 min-w-0">
               {activePage === 'plan'     && <LessonPlanPage />}
@@ -4337,9 +4353,20 @@ export default function App() {
           </div>
         )}
 
+        {confirmSignOut && (
+          <ConfirmModal
+            message={'로그아웃할까요?\n\n기록은 클라우드에 안전하게 남아 있으며,\n다시 로그인하면 그대로 복원됩니다.'}
+            confirmLabel="로그아웃"
+            onConfirm={() => { setConfirmSignOut(false); handleSignOut(); }}
+            onCancel={() => setConfirmSignOut(false)}
+          />
+        )}
+
         {isProfileModalOpen && (
           <ProfileModal
             currentProfile={profileState}
+            accountEmail={user?.email}
+            onSignOut={isFirebaseEnabled && user ? handleSignOut : undefined}
             onClose={() => setIsProfileModalOpen(false)}
             onSave={(newProfile) => {
               // 공휴일 자동 등록 기록(autoHolidayYears)은 유지
