@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, createContext, useContext } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
@@ -34,6 +34,37 @@ const loadFromLocal = (key: string, fallback: any) => {
   } catch (e) {}
   return fallback;
 };
+
+// 로컬 캐시에 담기는 데이터 키 목록 (로그아웃/계정 전환 시 함께 비워야 하는 대상)
+const LOCAL_DATA_KEYS = [
+  'lessons', 'lessonPlans', 'classes', 'holidays', 'events',
+  'records', 'tasks', 'taskNotes', 'profile', 'menuOrder', 'scoreLogs',
+];
+// 현재 로컬 캐시가 어느 계정(uid)의 것인지 기록해 둔다.
+// 다른 계정으로 로그인하면 이전 계정의 학생 이름/기록이 남거나 새 계정 문서로
+// 옮겨가지 않도록 캐시를 먼저 비운다.
+const LOCAL_OWNER_KEY = 'eduplanner_owner';
+const clearLocalCache = () => {
+  try {
+    LOCAL_DATA_KEYS.forEach(k => localStorage.removeItem(`eduplanner_${k}`));
+    localStorage.removeItem(LOCAL_OWNER_KEY);
+  } catch (e) {}
+};
+const getLocalOwner = (): string | null => {
+  try { return localStorage.getItem(LOCAL_OWNER_KEY); } catch (e) { return null; }
+};
+const setLocalOwner = (uid: string) => {
+  try { localStorage.setItem(LOCAL_OWNER_KEY, uid); } catch (e) {}
+};
+
+// ==========================================
+// Firestore 문서 경로
+// ==========================================
+// 로그인한 사용자의 uid 아래에만 데이터를 저장한다.
+// (이전에는 'public/data/appState/shared' 라는 공용 경로여서 앱에 접속한
+//  누구나 같은 문서를 읽고 쓸 수 있었다. 학생 이름이 들어가므로 uid로 격리한다.)
+const userDocRef = (uid: string) =>
+  doc(db!, 'artifacts', appId, 'users', uid, 'appState', 'shared');
 
 // ==========================================
 // 1. Data Models (TypeScript Interfaces)
@@ -3770,6 +3801,9 @@ function ProfileModal({ currentProfile, onClose, onSave }: ProfileModalProps) {
 // ==========================================
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  // Firebase가 아직 로그인 상태를 확인 중인 구간 (이때 로그인 화면을 깜빡이지 않도록)
+  const [authChecking, setAuthChecking] = useState(isFirebaseEnabled);
+  const [authError, setAuthError] = useState<string | null>(null);
   // 로컬 데이터가 있으면 즉시 표시, Firebase는 백그라운드 동기화
   const hasLocalData = !!localStorage.getItem('eduplanner_classes');
   const [isLoaded, setIsLoaded] = useState(!isFirebaseEnabled || hasLocalData);
@@ -3815,36 +3849,62 @@ export default function App() {
   const isSidebarLayout = windowWidth >= 800; 
   const sidebarWidth = Math.min(256, Math.max(56, Math.round(windowWidth * 0.18)));
 
+  // 로그인 상태 감시
+  // 익명 로그인은 기기마다 uid가 새로 발급되어 다른 기기에서 같은 데이터를 볼 수 없고,
+  // 브라우저 저장소가 정리되면 그 데이터에 영영 접근할 수 없다.
+  // 그래서 자동 로그인 대신 Google 계정 로그인을 요구한다. (uid가 기기와 무관하게 동일)
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (!isFirebaseEnabled) {
-           setIsLoaded(true);
-           return;
-        }
+    if (!isFirebaseEnabled || !auth) { setAuthChecking(false); setIsLoaded(true); return; }
 
-        // @ts-ignore
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          // @ts-ignore
-          await signInWithCustomToken(auth!, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth!);
-        }
-      } catch (err) {
-        setIsLoaded(true);
-      }
-    };
-    initAuth();
-    
-    if (isFirebaseEnabled && auth) {
-        const unsubscribe = onAuthStateChanged(auth, setUser);
-        return () => unsubscribe();
-    }
+    // 팝업이 막히는 환경(iOS Safari 등)에서 리디렉션으로 돌아온 결과 처리
+    getRedirectResult(auth).catch(() => {});
+
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setAuthChecking(false);
+      if (!u) { setIsLoaded(true); setCloudSynced(true); }
+    });
+    return () => unsubscribe();
   }, []);
+
+  const handleGoogleSignIn = async () => {
+    if (!auth) return;
+    setAuthError(null);
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (err: any) {
+      const code = err?.code || '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
+      // 팝업을 못 여는 환경이면 리디렉션 방식으로 한 번 더 시도
+      if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+        try { await signInWithRedirect(auth, provider); return; } catch (e) {}
+      }
+      setAuthError('로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (!auth) return;
+    try {
+      await signOut(auth);
+      // 이 기기에 남은 캐시(학생 이름 포함)를 정리한다. 클라우드에는 그대로 남아
+      // 다시 로그인하면 복원된다.
+      clearLocalCache();
+    } catch (e) {}
+  };
 
   useEffect(() => {
     if (!user || !isFirebaseEnabled || !db) return;
-    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'appState', 'shared');
+
+    // 직전에 다른 계정이 쓰던 기기라면, 그 계정의 캐시를 새 계정 문서로 올리지 않도록 먼저 비운다.
+    if (getLocalOwner() && getLocalOwner() !== user.uid) {
+      clearLocalCache();
+      setIsLoaded(false); // 새 계정 데이터가 도착할 때까지 이전 화면을 보여주지 않는다
+    }
+    setLocalOwner(user.uid);
+
+    const docRef = userDocRef(user.uid);
 
     const unsubscribe = onSnapshot(docRef, (snap) => {
       if (snap.exists()) {
@@ -3908,7 +3968,22 @@ export default function App() {
         saveToLocal('menuOrder', ms);
         saveToLocal('scoreLogs', sl);
       } else {
-        setDoc(docRef, { lessons: MOCK_LESSONS, lessonPlans: DEFAULT_LESSON_PLANS, classes: MOCK_SCHEDULES, holidays: MOCK_HOLIDAYS, events: [], records: [], tasks: MOCK_TASKS, profile: DEFAULT_PROFILE, menuOrder: DEFAULT_MENU_ORDER, scoreLogs: [] }, { merge: true });
+        // 이 계정의 문서가 아직 없는 경우 = 첫 로그인.
+        // 이 기기의 로컬 캐시에 기존 데이터가 있으면 그대로 올려서 옮긴다(기존 공용 문서에서의 이관).
+        // 캐시가 없으면 기본값으로 시작한다.
+        setDoc(docRef, {
+          lessons:     loadFromLocal('lessons', MOCK_LESSONS),
+          lessonPlans: loadFromLocal('lessonPlans', DEFAULT_LESSON_PLANS),
+          classes:     encodeClassesForFirestore(loadFromLocal('classes', MOCK_SCHEDULES)),
+          holidays:    loadFromLocal('holidays', MOCK_HOLIDAYS),
+          events:      loadFromLocal('events', []),
+          records:     loadFromLocal('records', []),
+          tasks:       loadFromLocal('tasks', MOCK_TASKS),
+          taskNotes:   loadFromLocal('taskNotes', []),
+          profile:     loadFromLocal('profile', DEFAULT_PROFILE),
+          menuOrder:   loadFromLocal('menuOrder', DEFAULT_MENU_ORDER),
+          scoreLogs:   loadFromLocal('scoreLogs', []),
+        }, { merge: true });
       }
       setIsLoaded(true);
       setCloudSynced(true);
@@ -3920,7 +3995,7 @@ export default function App() {
   const updateFirestoreField = async (field: string, data: any) => {
     if (!isFirebaseEnabled || !db) return; // Firebase 비활성 시 조용히 통과
     if (!user) throw new Error('로그인 필요'); // user 없으면 명시적 에러 → catch에서 처리
-    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'appState', 'shared');
+    const docRef = userDocRef(user.uid);
     // Firestore는 undefined 값을 직렬화하지 못하므로 JSON 왕복으로 제거
     const sanitized = JSON.parse(JSON.stringify(data));
     await setDoc(docRef, { [field]: sanitized }, { merge: true });
@@ -4006,6 +4081,51 @@ export default function App() {
     contextValue.updateMenuOrder(newOrder);
     setDraggedNavIdx(null);
   };
+
+  // 로그인 상태 확인 중
+  if (authChecking) {
+    return (
+      <div className="flex h-screen bg-slate-50 dark:bg-slate-900 items-center justify-center selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-indigo-200 dark:border-indigo-800 border-t-indigo-600 dark:border-t-indigo-500 rounded-full animate-spin"></div>
+          <div className="text-slate-500 dark:text-slate-400 font-bold text-sm animate-pulse">로그인 확인 중...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // 로그인 화면 (클라우드 사용 시에만 표시)
+  if (isFirebaseEnabled && !user) {
+    return (
+      <div className="flex h-screen bg-slate-50 dark:bg-slate-900 items-center justify-center p-6 selection:bg-indigo-100 dark:selection:bg-indigo-900/50">
+        <div className="w-full max-w-sm flex flex-col items-center text-center">
+          <div className="p-4 bg-indigo-500 rounded-2xl shadow-lg text-white mb-5"><IconCalendar /></div>
+          <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">CE수첩</h1>
+          <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+            학생 이름과 기록이 담기므로 로그인이 필요합니다.<br />
+            로그인한 계정만 이 데이터를 열 수 있습니다.
+          </p>
+
+          <button
+            onClick={handleGoogleSignIn}
+            className="mt-8 w-full flex items-center justify-center gap-3 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-2xl py-3.5 px-5 font-bold text-sm text-slate-700 dark:text-slate-100 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+          >
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 48 48" aria-hidden="true">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+              <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+            </svg>
+            Google 계정으로 로그인
+          </button>
+
+          {authError && (
+            <div className="mt-4 text-xs font-bold text-rose-600 dark:text-rose-400">{authError}</div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (!isLoaded) {
     return (
@@ -4094,6 +4214,18 @@ export default function App() {
                     </div>
                   )}
                 </button>
+
+                {isFirebaseEnabled && user && sidebarWidth >= 160 && (
+                  <div className="mt-2 px-1">
+                    <div className="text-[10px] text-slate-500 font-medium truncate" title={user.email || ''}>{user.email}</div>
+                    <button
+                      onClick={handleSignOut}
+                      className="mt-1 text-[11px] font-bold text-slate-400 hover:text-rose-400 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+                    >
+                      로그아웃
+                    </button>
+                  </div>
+                )}
               </div>
             </aside>
 
@@ -4116,9 +4248,21 @@ export default function App() {
                 <span className="text-lg font-black tracking-tight">CE수첩</span>
                 <span className={`w-2 h-2 rounded-full animate-pulse ${isFirebaseEnabled ? 'bg-green-500' : 'bg-orange-500'}`}></span>
               </button>
-              <button aria-label="프로필 설정 수정" onClick={() => setIsProfileModalOpen(true)} className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-sm uppercase focus:outline-none shadow-inner">
-                {profileState.name.charAt(0) || 'U'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button aria-label="프로필 설정 수정" onClick={() => setIsProfileModalOpen(true)} className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-indigo-400 font-bold text-sm uppercase focus:outline-none shadow-inner">
+                  {profileState.name.charAt(0) || 'U'}
+                </button>
+                {isFirebaseEnabled && user && (
+                  <button
+                    aria-label="로그아웃"
+                    title={user.email || '로그아웃'}
+                    onClick={handleSignOut}
+                    className="text-[11px] font-bold text-slate-400 hover:text-rose-400 transition-colors focus:outline-none px-1"
+                  >
+                    로그아웃
+                  </button>
+                )}
+              </div>
             </header>
             <main className="flex-1 overflow-hidden relative bg-gray-50 dark:bg-slate-900 min-w-0">
               {activePage === 'plan'     && <LessonPlanPage />}
