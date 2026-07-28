@@ -286,19 +286,8 @@ function generateClassLessonSchedule(
 ): ScheduledItem[] {
   const sortedLessons = [...lessons].sort((a, b) => a.order - b.order);
 
-  // 학기별 시간표 세그먼트 정렬 (날짜 오름차순)
-  const scheduleSegments = [
-    { startDate: schedule.startDate, weeklySlots: schedule.weeklySlots },
-    ...(schedule.semesterSchedules || []).map(ss => ({ startDate: ss.startDate, weeklySlots: ss.weeklySlots })),
-  ].sort((a, b) => a.startDate.localeCompare(b.startDate));
-  const getSlotsForDate = (dateStr: string): WeeklySlot[] => {
-    let result = scheduleSegments[0]?.weeklySlots || [];
-    for (const seg of scheduleSegments) {
-      if (seg.startDate <= dateStr) result = seg.weeklySlots;
-      else break;
-    }
-    return result;
-  };
+  // 학기별 시간표 세그먼트 (날짜 기준으로 1학기/2학기 시간표 중 알맞은 것을 반환)
+  const getSlotsForDate = (dateStr: string): WeeklySlot[] => getWeeklySlotsForDate(schedule, dateStr);
 
   const relevantHolidays = holidays.filter(h => !h.classIds || h.classIds.length === 0 || h.classIds.includes(schedule.classId));
   const allDayHolidaySet = new Set(relevantHolidays.filter(h => !h.periods || h.periods.length === 0).map(h => h.date));
@@ -453,6 +442,20 @@ const isBefore = (aDate: string, aPeriod: number, bDate: string, bPeriod: number
 function getSemesterForDate(cls: ClassSchedule, dateStr: string): 1 | 2 {
   const sem2 = (cls.semesterSchedules || []).find(s => s.semester === 2);
   return sem2?.startDate && dateStr >= sem2.startDate ? 2 : 1;
+}
+
+// 어떤 날짜에 적용되는 주간 시간표(요일/교시) — 1학기/2학기 시간표가 다르면 날짜 기준으로 알맞은 쪽을 반환
+function getWeeklySlotsForDate(cls: ClassSchedule, dateStr: string): WeeklySlot[] {
+  const segments = [
+    { startDate: cls.startDate, weeklySlots: cls.weeklySlots },
+    ...(cls.semesterSchedules || []).map(ss => ({ startDate: ss.startDate, weeklySlots: ss.weeklySlots })),
+  ].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  let result = segments[0]?.weeklySlots || [];
+  for (const seg of segments) {
+    if (seg.startDate <= dateStr) result = seg.weeklySlots;
+    else break;
+  }
+  return result;
 }
 
 // 학급 일정이 들어갈 계획서 구간과 "몇 차시 뒤"인지를 계산
@@ -2426,30 +2429,37 @@ function ManagePage() {
     const targetClasses = selectedClassId === 'all' ? classes : classes.filter(c => c.classId === selectedClassId);
     const allItems: { item: ScheduledItem; classInfo: ClassSchedule }[] = [];
     const plans = lessonPlans.length > 0 ? lessonPlans : [{ id: 'plan-default', name: '기본 수업계획서', semester: 1 as const, classIds: [], lessons }];
-    const weekStartStr = dateUtils.formatDate(currentWeekStart);
 
     targetClasses.forEach(cls => {
-      // 보고 있는 주가 해당 학급의 2학기 시작일 이후면 2학기 기본 계획 사용
-      // (2학기 시작일이 비어있으면 무시 — 빈 문자열 비교로 잘못 2학기가 되는 것 방지)
+      // 학기 경계는 '보고 있는 주(월요일 기준)'가 아니라 실제 날짜로 판정해야 한다.
+      // 경계일이 월요일이 아니면 한 주 안에 1학기 날짜와 2학기 날짜가 섞여 있을 수 있으므로,
+      // 1학기·2학기 스케줄을 각각 정확한 날짜 범위로 만들어 합친다.
       const sem2Schedule = (cls.semesterSchedules || []).find(ss => ss.semester === 2);
       const hasSem2 = !!(sem2Schedule && sem2Schedule.startDate);
-      const semester: 1 | 2 = hasSem2 && weekStartStr >= sem2Schedule!.startDate ? 2 : 1;
-      // 2학기로 판정됐지만 2학기 기본 계획이 없으면 1학기 계획을 그대로 사용
+      // 2학기 시작일이 있어도 2학기 계획서가 하나도 없으면 1학기 계획을 계속 사용(끊지 않음)
       const hasSem2Plan = !!getBasePlanForSemester(plans, 2);
-      const effectiveSemester: 1 | 2 = semester === 2 && hasSem2Plan ? 2 : 1;
-      // 2학기 시간표 시작일을 학급 시작일에 반영(시간표 전환용)
-      const effectiveCls = effectiveSemester === 2 && sem2Schedule?.startDate ? { ...cls, startDate: sem2Schedule.startDate } : cls;
-      // 1학기 차시는 2학기 시작일에서 끊어 2학기 날짜로 흘러넘치지 않게 한다.
-      const semesterEndExclusive = effectiveSemester === 1 && hasSem2 ? sem2Schedule!.startDate : null;
-      // 기간별 계획서를 적용. 계획서가 전혀 없으면 레거시 lessons 폴백.
-      let clsSchedule = generateSegmentedSchedule(plans, effectiveSemester, effectiveCls, holidays, events, weekEndDateStr, semesterEndExclusive);
-      if (clsSchedule.length === 0 && getPlanSegmentsForClass(plans, effectiveSemester, effectiveCls).length === 0) {
-        clsSchedule = generateClassLessonSchedule(lessons, effectiveCls, holidays, events, weekEndDateStr, undefined, semesterEndExclusive);
+      const useSem2 = hasSem2 && hasSem2Plan;
+
+      // 1학기 구간: 학급 시작일 ~ (2학기가 있으면) 2학기 시작일 전날까지
+      const sem1EndExclusive = useSem2 ? sem2Schedule!.startDate : null;
+      let sem1Schedule = generateSegmentedSchedule(plans, 1, cls, holidays, events, weekEndDateStr, sem1EndExclusive);
+      if (sem1Schedule.length === 0 && getPlanSegmentsForClass(plans, 1, cls).length === 0) {
+        sem1Schedule = generateClassLessonSchedule(lessons, cls, holidays, events, weekEndDateStr, undefined, sem1EndExclusive);
       }
-      clsSchedule.forEach(item => allItems.push({ item, classInfo: cls }));
+      sem1Schedule.forEach(item => allItems.push({ item, classInfo: cls }));
+
+      // 2학기 구간: 2학기 시작일부터 (2학기 시간표·계획서가 모두 있을 때만)
+      if (useSem2) {
+        const effectiveCls = { ...cls, startDate: sem2Schedule!.startDate };
+        let sem2ScheduleItems = generateSegmentedSchedule(plans, 2, effectiveCls, holidays, events, weekEndDateStr, null);
+        if (sem2ScheduleItems.length === 0 && getPlanSegmentsForClass(plans, 2, effectiveCls).length === 0) {
+          sem2ScheduleItems = generateClassLessonSchedule(lessons, effectiveCls, holidays, events, weekEndDateStr, undefined, null);
+        }
+        sem2ScheduleItems.forEach(item => allItems.push({ item, classInfo: cls }));
+      }
     });
     return allItems;
-  }, [lessons, lessonPlans, classes, holidays, events, weekEndDateStr, currentWeekStart, selectedClassId]);
+  }, [lessons, lessonPlans, classes, holidays, events, weekEndDateStr, selectedClassId]);
 
   const scheduleMap = new Map<string, { item: ScheduledItem; classInfo: ClassSchedule }[]>();
   schedulesToRender.forEach(data => {
@@ -2637,9 +2647,10 @@ function ManagePage() {
 
                   let isTargetSlot = false;
                   if (selectedClassId !== 'all') {
-                    isTargetSlot = classes.find(c => c.classId === selectedClassId)?.weeklySlots.some(s => s.dayOfWeek === date.getDay() && s.period === period) || false;
+                    const selectedCls = classes.find(c => c.classId === selectedClassId);
+                    isTargetSlot = selectedCls ? getWeeklySlotsForDate(selectedCls, dateStr).some(s => s.dayOfWeek === date.getDay() && s.period === period) : false;
                   } else {
-                    isTargetSlot = classes.some(c => c.weeklySlots.some(s => s.dayOfWeek === date.getDay() && s.period === period));
+                    isTargetSlot = classes.some(c => getWeeklySlotsForDate(c, dateStr).some(s => s.dayOfWeek === date.getDay() && s.period === period));
                   }
                   
                   const shadingClass = !isTargetSlot && !isHoliday && !isToday ? 'bg-gray-100/80 dark:bg-slate-800/40 opacity-70' : '';
