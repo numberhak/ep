@@ -2674,6 +2674,9 @@ function ManagePage() {
                                   <span className="shrink-0 text-[10px] bg-white/60 dark:bg-black/20 px-1.5 py-0.5 rounded font-bold dark:text-white/80">{data.item.lesson?.order}차시</span>
                                 </div>
                                 <div className="mt-1.5 font-bold text-gray-800 dark:text-gray-100 leading-snug line-clamp-2 break-keep text-sm">{data.item.lesson?.title}</div>
+                                {data.item.lesson?.memo && (
+                                  <div className="mt-1 text-[10px] text-gray-500 dark:text-gray-400 leading-tight line-clamp-2 break-keep">{data.item.lesson.memo}</div>
+                                )}
                               </button>
                             );
                           } else {
