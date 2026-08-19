@@ -80,7 +80,7 @@ export interface LessonPlan { id: string; name: string; semester?: 1 | 2; startD
 export interface WeeklySlot { dayOfWeek: number; period: number; }
 export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan';
 export interface SemesterSchedule { semester: 1 | 2; startDate: string; weeklySlots: WeeklySlot[]; }
-export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; semesterSchedules?: SemesterSchedule[]; classScore?: number; groupScores?: number[]; groupMembers?: string[][]; }
+export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; semesterSchedules?: SemesterSchedule[]; classScore?: number; groupScores?: number[]; groupMembers?: string[][]; groupHighlights?: { g: number; m: number }[]; }
 export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; periods?: number[]; classIds?: string[]; }
 export interface ClassEvent { id: string; classId: string; date: string; period: number; title: string; type: 'exception' | 'extra' | 'replace'; }
 export interface ClassRecord { id: string; classId: string; date: string; content: string; important?: boolean; }
@@ -1789,12 +1789,17 @@ interface GroupBoardProps {
   members: string[][];
   groupScores: number[];
   colorStyle: any;
+  highlights: { g: number; m: number }[];
   onUpdateScore: (index: number, amount: number) => void;
   onSaveMembers: (members: string[][]) => Promise<void>;
+  onToggleHighlight: (groupIdx: number, memberIdx: number) => void;
+  onSwapGroups: (a: number, b: number) => void;
 }
-function GroupBoard({ classId, members, groupScores, colorStyle, onUpdateScore, onSaveMembers }: GroupBoardProps) {
+function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onUpdateScore, onSaveMembers, onToggleHighlight, onSwapGroups }: GroupBoardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<string[][]>(() => normalizeGroupMembers(members));
+  const [swapA, setSwapA] = useState(0);
+  const [swapB, setSwapB] = useState(1);
 
   // 학급을 바꾸면 편집 상태를 정리하고 새 학급 데이터로 초기화
   // (편집 중이 아닐 땐 members 를 그대로 렌더링하므로 별도 동기화가 필요 없다)
@@ -1838,7 +1843,7 @@ function GroupBoard({ classId, members, groupScores, colorStyle, onUpdateScore, 
         <div>
           <h3 className="text-sm font-black text-slate-700 dark:text-slate-200">👥 모둠 보드</h3>
           <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 mt-0.5">
-            {isEditing ? '이름을 입력하고 ▲▼로 모둠 번호를 바꿀 수 있습니다.' : '모둠 점수 아래에 같은 번호끼리 같은 행으로 표시됩니다.'}
+            {isEditing ? '이름을 입력하고 ▲▼로 모둠 번호를 바꿀 수 있습니다.' : '이름을 클릭하면 최대 2명까지 강조 표시할 수 있습니다.'}
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -1852,6 +1857,36 @@ function GroupBoard({ classId, members, groupScores, colorStyle, onUpdateScore, 
           )}
         </div>
       </div>
+
+      {!isEditing && (
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap mb-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 sm:px-3 py-2">
+          <span className="text-[11px] font-black text-slate-500 dark:text-slate-400 shrink-0">🔀 모둠 전체 바꾸기</span>
+          <select
+            aria-label="바꿀 모둠 1"
+            value={swapA}
+            onChange={e => setSwapA(Number(e.target.value))}
+            className="text-[11px] sm:text-xs font-bold border border-slate-200 dark:border-slate-600 rounded-lg px-1.5 sm:px-2 py-1 bg-white dark:bg-slate-800 text-gray-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            {Array.from({ length: GROUP_COUNT }).map((_, i) => <option key={i} value={i}>{i + 1}모둠</option>)}
+          </select>
+          <span className="text-slate-400 text-xs">↔</span>
+          <select
+            aria-label="바꿀 모둠 2"
+            value={swapB}
+            onChange={e => setSwapB(Number(e.target.value))}
+            className="text-[11px] sm:text-xs font-bold border border-slate-200 dark:border-slate-600 rounded-lg px-1.5 sm:px-2 py-1 bg-white dark:bg-slate-800 text-gray-800 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            {Array.from({ length: GROUP_COUNT }).map((_, i) => <option key={i} value={i}>{i + 1}모둠</option>)}
+          </select>
+          <button
+            onClick={() => onSwapGroups(swapA, swapB)}
+            disabled={swapA === swapB}
+            className="px-2.5 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-bold bg-slate-800 dark:bg-indigo-600 text-white hover:bg-slate-700 dark:hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            통째로 바꾸기
+          </button>
+        </div>
+      )}
 
       <div>
         <div>
@@ -1900,12 +1935,24 @@ function GroupBoard({ classId, members, groupScores, colorStyle, onUpdateScore, 
                 if (!isEditing) {
                   // 평소 화면에서는 칸 안의 번호를 숨긴다. 행 순서(ri)가 곧 번호이므로
                   // 1행=1번, 2행=2번 배치는 그대로 유지된다.
+                  const isHighlighted = highlights.some(h => h.g === gi && h.m === ri);
                   return (
-                    <div key={gi} className="flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2 py-2 rounded-xl bg-white/90 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 min-w-0">
-                      <span className="truncate text-[11px] sm:text-xs md:text-sm font-bold text-slate-700 dark:text-slate-200">
-                        {name || <span className="text-slate-300 dark:text-slate-600 font-normal">—</span>}
+                    <button
+                      key={gi}
+                      type="button"
+                      aria-label={`${gi + 1}모둠 ${ri + 1}번 강조 표시 전환`}
+                      aria-pressed={isHighlighted}
+                      onClick={() => name.trim() && onToggleHighlight(gi, ri)}
+                      className={`flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2 py-2 rounded-xl border min-w-0 text-left transition-colors ${
+                        isHighlighted
+                          ? 'bg-amber-100 dark:bg-amber-900/40 border-amber-300 dark:border-amber-600 ring-2 ring-amber-400 dark:ring-amber-500'
+                          : 'bg-white/90 dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 hover:border-amber-200 dark:hover:border-amber-800'
+                      }`}
+                    >
+                      <span className={`truncate text-[11px] sm:text-xs md:text-sm font-bold ${isHighlighted ? 'text-amber-700 dark:text-amber-300' : 'text-slate-700 dark:text-slate-200'}`}>
+                        {isHighlighted && '⭐ '}{name || <span className="text-slate-300 dark:text-slate-600 font-normal">—</span>}
                       </span>
-                    </div>
+                    </button>
                   );
                 }
                 return (
@@ -2080,6 +2127,40 @@ function RecordsPage() {
     }
   };
 
+  const handleToggleHighlight = async (groupIdx: number, memberIdx: number) => {
+    if (!activeClass) return;
+    const current = activeClass.groupHighlights ?? [];
+    const exists = current.some(h => h.g === groupIdx && h.m === memberIdx);
+    let next: { g: number; m: number }[];
+    if (exists) {
+      next = current.filter(h => !(h.g === groupIdx && h.m === memberIdx));
+    } else {
+      if (current.length >= 2) {
+        addToast('최대 2명까지만 강조할 수 있어요. 먼저 강조를 해제해주세요.');
+        return;
+      }
+      next = [...current, { g: groupIdx, m: memberIdx }];
+    }
+    try {
+      await updateClasses(classes.map(c => c.classId === activeClass.classId ? { ...c, groupHighlights: next } : c));
+    } catch {
+      addToast('강조 표시 저장에 실패했습니다.');
+    }
+  };
+
+  const handleSwapGroups = async (a: number, b: number) => {
+    if (!activeClass || a === b) return;
+    const currentMembers = normalizeGroupMembers(activeClass.groupMembers ?? []);
+    const nextMembers = currentMembers.map((g, gi) => (gi === a ? currentMembers[b] : gi === b ? currentMembers[a] : g));
+    const nextHighlights = (activeClass.groupHighlights ?? []).map(h => (h.g === a ? { ...h, g: b } : h.g === b ? { ...h, g: a } : h));
+    try {
+      await updateClasses(classes.map(c => c.classId === activeClass.classId ? { ...c, groupMembers: nextMembers, groupHighlights: nextHighlights } : c));
+      addToast(`${a + 1}모둠과 ${b + 1}모둠을 통째로 바꿨습니다.`, 'success');
+    } catch {
+      addToast('모둠 교체에 실패했습니다.');
+    }
+  };
+
   const handleExportCSV = () => {
     if (!activeClass) return;
     const filteredRecords = classRecords.filter(r => r.date >= exportStartDate && r.date <= exportEndDate);
@@ -2125,8 +2206,11 @@ function RecordsPage() {
             members={activeClass.groupMembers ?? []}
             groupScores={activeClass.groupScores ?? [0, 0, 0, 0, 0]}
             colorStyle={COLOR_MAP[activeClass.color]}
+            highlights={activeClass.groupHighlights ?? []}
             onUpdateScore={(i, amt) => handleUpdateScore('group', amt, i)}
             onSaveMembers={handleSaveGroupMembers}
+            onToggleHighlight={handleToggleHighlight}
+            onSwapGroups={handleSwapGroups}
           />
 
           {/* 중요 기록 핀 영역 */}
