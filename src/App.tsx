@@ -860,7 +860,11 @@ function LessonPlanPage() {
     const semesterStart = selectedSemester === 2 ? (sem2?.startDate || cls.startDate) : cls.startDate;
     // 이 계획서가 적용되는 구간 [start, endExclusive) 안에서만 예정 일정 계산
     const segStart = activePlan.startDate || semesterStart;
-    const effectiveCls = { ...cls, startDate: segStart };
+    // effectiveCls.startDate는 실제 학기 시작일로 유지해야 한다 (주간 진도표와 동일한 방식).
+    // segStart(계획서별 적용 시작일)를 여기에 넣으면 getWeeklySlotsForDate가 세그먼트를
+    // 시작일 기준으로 정렬할 때 2학기 시간표보다 뒤로 밀려, 실제 2학기 요일/교시 대신
+    // 1학기 시간표가 적용되어 날짜가 어긋나는 문제가 있었다.
+    const effectiveCls = { ...cls, startDate: semesterStart };
     const scheduled = generateClassLessonSchedule(
       lessonsForClass, effectiveCls, holidays, events, endDate, segStart, activePlanRange.endExclusive
     );
@@ -1800,6 +1804,7 @@ function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onU
   const [draft, setDraft] = useState<string[][]>(() => normalizeGroupMembers(members));
   const [swapA, setSwapA] = useState(0);
   const [swapB, setSwapB] = useState(1);
+  const [confirmSwap, setConfirmSwap] = useState(false);
 
   // 학급을 바꾸면 편집 상태를 정리하고 새 학급 데이터로 초기화
   // (편집 중이 아닐 땐 members 를 그대로 렌더링하므로 별도 동기화가 필요 없다)
@@ -1858,7 +1863,7 @@ function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onU
         </div>
       </div>
 
-      {!isEditing && (
+      {isEditing && (
         <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap mb-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 sm:px-3 py-2">
           <span className="text-[11px] font-black text-slate-500 dark:text-slate-400 shrink-0">🔀 모둠 전체 바꾸기</span>
           <select
@@ -1879,13 +1884,27 @@ function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onU
             {Array.from({ length: GROUP_COUNT }).map((_, i) => <option key={i} value={i}>{i + 1}모둠</option>)}
           </select>
           <button
-            onClick={() => onSwapGroups(swapA, swapB)}
+            onClick={() => setConfirmSwap(true)}
             disabled={swapA === swapB}
             className="px-2.5 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-bold bg-slate-800 dark:bg-indigo-600 text-white hover:bg-slate-700 dark:hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             통째로 바꾸기
           </button>
         </div>
+      )}
+
+      {confirmSwap && (
+        <ConfirmModal
+          message={`${swapA + 1}모둠과 ${swapB + 1}모둠을 통째로 바꿀까요?`}
+          confirmLabel="바꾸기"
+          onConfirm={() => {
+            onSwapGroups(swapA, swapB);
+            // 편집 중인 draft도 함께 바꿔서 저장 시 방금 바꾼 내용이 덮어써지지 않도록 한다.
+            setDraft(prev => prev.map((g, gi) => (gi === swapA ? prev[swapB] : gi === swapB ? prev[swapA] : g)));
+            setConfirmSwap(false);
+          }}
+          onCancel={() => setConfirmSwap(false)}
+        />
       )}
 
       <div>
