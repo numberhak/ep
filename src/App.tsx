@@ -589,20 +589,28 @@ const IconRight      = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 2
 // 같은 그룹(data-lesson-nav-group) 안의 입력칸을 DOM 순서대로 모아 열 개수만큼 건너뛴다.
 const handleLessonNavKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
   if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-  if (e.nativeEvent.isComposing) return; // 한글 조합 중에는 IME에 맡긴다
   const current = e.currentTarget;
   const group = current.closest('[data-lesson-nav-group]');
   if (!group) return;
-  const inputs = Array.from(group.querySelectorAll<HTMLInputElement>('input[data-lesson-nav]'));
-  const idx = inputs.indexOf(current);
+  const sel = 'input[data-lesson-nav]';
+  const idx = Array.from(group.querySelectorAll<HTMLInputElement>(sel)).indexOf(current);
   if (idx === -1) return;
   const cols = Number(group.getAttribute('data-lesson-nav-cols')) || 1;
-  const next = inputs[idx + (e.key === 'ArrowDown' ? cols : -cols)];
-  if (!next) return;
+  const nextIdx = idx + (e.key === 'ArrowDown' ? cols : -cols);
+  if (nextIdx < 0 || nextIdx >= group.querySelectorAll(sel).length) return;
   e.preventDefault();
-  next.focus();
-  const pos = Math.min(current.selectionStart ?? next.value.length, next.value.length);
-  next.setSelectionRange(pos, pos);
+  const pos = current.selectionStart ?? 0;
+  const move = () => {
+    const next = group.querySelectorAll<HTMLInputElement>(sel)[nextIdx];
+    if (!next) return;
+    next.focus();
+    const p = Math.min(pos, next.value.length);
+    next.setSelectionRange(p, p);
+  };
+  // 한글은 마지막 글자가 조합 중으로 남아 있다. 그 상태에서 바로 focus를 옮기면
+  // 방향키가 조합을 끝내는 데만 쓰이고 이동은 무시되므로, 조합이 확정된 다음 tick에 옮긴다.
+  if (e.nativeEvent.isComposing) setTimeout(move, 0);
+  else move();
 };
 
 // ==========================================
@@ -3319,6 +3327,9 @@ function HolidayModal({ onClose, onAdd, classes, initial }: HolidayModalProps) {
   const isEdit = !!initial;
   const [startDate, setStartDate] = useState(initial?.startDate || '');
   const [endDate, setEndDate] = useState(initial?.endDate || '');
+  // 종료일을 사용자가 직접 지정했는지 여부. 지정 전에는 종료일이 늘 시작일을 따라간다.
+  // (수정 모드에서 기간이 이틀 이상이면 직접 지정한 값으로 본다)
+  const [endTouched, setEndTouched] = useState(!!(initial?.endDate && initial.endDate !== initial.startDate));
   const [newTitle, setNewTitle] = useState(initial?.title || '');
   const [isHolidayType, setIsHolidayType] = useState(initial ? initial.isHoliday : true);
   const [mode, setMode] = useState<'simple' | 'slots'>(initial?.mode || 'simple');
@@ -3327,7 +3338,16 @@ function HolidayModal({ onClose, onAdd, classes, initial }: HolidayModalProps) {
 
   const handleStartDateChange = (value: string) => {
     setStartDate(value);
-    setEndDate(prev => (!prev || prev < value) ? value : prev);
+    if (!endTouched) {
+      setEndDate(value);                                             // 직접 고르기 전 → 항상 시작일과 동일
+    } else {
+      setEndDate(prev => (prev && prev < value) ? value : prev);     // 직접 고른 뒤 → 역전될 때만 끌어온다
+    }
+  };
+
+  const handleEndDateChange = (value: string) => {
+    setEndDate(value);
+    setEndTouched(!!value);   // 종료일을 비우면 다시 시작일을 따라간다
   };
 
   const toggleSlotPeriod = (slotIdx: number, p: number) => {
@@ -3397,7 +3417,7 @@ function HolidayModal({ onClose, onAdd, classes, initial }: HolidayModalProps) {
             </div>
             <div className="flex-1">
               <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">종료일 <span className="text-[10px] font-medium text-slate-400">(비우면 시작일과 동일)</span></label>
-              <input type="date" aria-label="종료일" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input type="date" aria-label="종료일" value={endDate} onChange={e => handleEndDateChange(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
           <div><label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">일정명</label><input type="text" aria-label="전체 일정 이름" value={newTitle} onChange={e => setNewTitle(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500" placeholder={isHolidayType ? "예: 개교기념일" : "예: 도박예방교육"} /></div>
