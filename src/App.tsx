@@ -585,6 +585,26 @@ const IconChecklist  = () => <svg className="w-5 h-5" fill="none" stroke="curren
 const IconLeft       = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>;
 const IconRight      = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>;
 
+// 수업 제목 / 비고 입력칸에서 위·아래 방향키로 같은 열의 윗줄·아랫줄로 이동한다.
+// 같은 그룹(data-lesson-nav-group) 안의 입력칸을 DOM 순서대로 모아 열 개수만큼 건너뛴다.
+const handleLessonNavKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+  if (e.nativeEvent.isComposing) return; // 한글 조합 중에는 IME에 맡긴다
+  const current = e.currentTarget;
+  const group = current.closest('[data-lesson-nav-group]');
+  if (!group) return;
+  const inputs = Array.from(group.querySelectorAll<HTMLInputElement>('input[data-lesson-nav]'));
+  const idx = inputs.indexOf(current);
+  if (idx === -1) return;
+  const cols = Number(group.getAttribute('data-lesson-nav-cols')) || 1;
+  const next = inputs[idx + (e.key === 'ArrowDown' ? cols : -cols)];
+  if (!next) return;
+  e.preventDefault();
+  next.focus();
+  const pos = Math.min(current.selectionStart ?? next.value.length, next.value.length);
+  next.setSelectionRange(pos, pos);
+};
+
 // ==========================================
 // LessonPlanPage
 // ==========================================
@@ -797,6 +817,62 @@ function LessonPlanPage() {
       if (i === targetIndex) return { ...base[index], order: targetIndex + 1 };
       return l;
     });
+    if (isEditMode) {
+      setEditData(newData);
+    } else {
+      try { await saveActivePlanLessons(newData); } catch { addToast('순서 변경에 실패했습니다.'); }
+    }
+  };
+
+  // ---- 드래그로 차시 순서 옮기기 ----
+  // 손잡이를 누른 행만 draggable로 바꿔, 입력칸 안에서 글자를 끌어도 행이 끌리지 않게 한다.
+  const [dragArmed, setDragArmed] = useState<number | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  const startRowDrag = (e: React.DragEvent, index: number) => {
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  };
+  const handleRowDragOver = (e: React.DragEvent, index: number) => {
+    if (dragIndex === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverIndex !== index) setDragOverIndex(index);
+  };
+  const endRowDrag = () => { setDragArmed(null); setDragIndex(null); setDragOverIndex(null); };
+  const handleRowDrop = (e: React.DragEvent, index: number, reorder: (from: number, to: number) => void) => {
+    e.preventDefault();
+    if (dragIndex !== null && dragIndex !== index) reorder(dragIndex, index);
+    endRowDrag();
+  };
+  // 끌고 있는 행은 흐리게, 놓일 자리에는 선을 그려 표시
+  const rowDragClass = (index: number) => {
+    if (dragIndex === index) return 'opacity-40';
+    if (dragIndex !== null && dragOverIndex === index) {
+      return dragIndex < index ? 'border-b-2 border-indigo-500' : 'border-t-2 border-indigo-500';
+    }
+    return '';
+  };
+
+  const reorderClassLesson = (from: number, to: number) => {
+    setClassEditData(prev => {
+      if (from < 0 || to < 0 || from >= prev.length || to >= prev.length || from === to) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next.map((l, i) => ({ ...l, order: i + 1 }));
+    });
+  };
+
+  const reorderLesson = async (from: number, to: number) => {
+    const base = [...(isEditMode ? editData : (activePlan?.lessons || []))].sort((a, b) => a.order - b.order);
+    if (from < 0 || to < 0 || from >= base.length || to >= base.length || from === to) return;
+    const next = [...base];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    const newData = next.map((l, i) => ({ ...l, order: i + 1 }));
     if (isEditMode) {
       setEditData(newData);
     } else {
@@ -1085,7 +1161,7 @@ function LessonPlanPage() {
               </div>
             </div>
 
-            <div className="hidden md:block bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-x-auto">
+            <div data-lesson-nav-group data-lesson-nav-cols="2" className="hidden md:block bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-x-auto">
               <table className="w-full text-left border-collapse min-w-[600px]">
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-sm border-b border-slate-100 dark:border-slate-700">
@@ -1124,16 +1200,24 @@ function LessonPlanPage() {
                     const DAY_KO = ['일','월','화','수','목','금','토'];
                     const schedLabel = sched ? (() => { const d = dateUtils.parseDate(sched.date); return `${d.getMonth()+1}/${d.getDate()}(${DAY_KO[d.getDay()]}) ${sched.period}교시`; })() : null;
                     return (
-                      <tr key={`ls-${index}-${rowIdx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors bg-indigo-50/10 dark:bg-indigo-900/10">
+                      <tr
+                        key={`ls-${index}-${rowIdx}`}
+                        draggable={dragArmed === index}
+                        onDragStart={e => startRowDrag(e, index)}
+                        onDragOver={e => handleRowDragOver(e, index)}
+                        onDrop={e => handleRowDrop(e, index, reorderClassLesson)}
+                        onDragEnd={endRowDrag}
+                        className={`hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors bg-indigo-50/10 dark:bg-indigo-900/10 ${rowDragClass(index)}`}
+                      >
                         <td className="px-6 py-4">
                           <span className="font-black text-indigo-600 dark:text-indigo-400 whitespace-nowrap">{index + 1}차시</span>
                           {!baseSame && <span className="ml-2 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded-md">수정됨</span>}
                         </td>
                         <td className="px-6 py-3">
-                          <input type="text" value={item.title} onChange={e => handleClassEditChange(index, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" />
+                          <input type="text" data-lesson-nav onKeyDown={handleLessonNavKey} value={item.title} onChange={e => handleClassEditChange(index, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" />
                         </td>
                         <td className="px-6 py-3">
-                          <input type="text" value={item.memo} onChange={e => handleClassEditChange(index, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="교사용 메모 입력" />
+                          <input type="text" data-lesson-nav onKeyDown={handleLessonNavKey} value={item.memo} onChange={e => handleClassEditChange(index, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="교사용 메모 입력" />
                         </td>
                         <td className="px-6 py-4">
                           {schedLabel
@@ -1142,8 +1226,7 @@ function LessonPlanPage() {
                         </td>
                         <td className="px-6 py-3 text-center">
                           <div className="flex justify-center items-center gap-1">
-                            <button aria-label="위로 이동" onClick={() => moveClassLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▲</button>
-                            <button aria-label="아래로 이동" onClick={() => moveClassLesson(index, 1)} disabled={index === classEditData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▼</button>
+                            <span role="button" tabIndex={-1} aria-label="드래그하여 차시 순서 변경" title="드래그하여 순서를 옮기세요" onMouseDown={() => setDragArmed(index)} onMouseUp={endRowDrag} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-md transition-colors cursor-grab active:cursor-grabbing select-none">⠿</span>
                             <button aria-label="차시 삭제" onClick={() => deleteClassLesson(index)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors font-bold">×</button>
                           </div>
                         </td>
@@ -1157,7 +1240,7 @@ function LessonPlanPage() {
               </table>
             </div>
 
-            <div className="md:hidden space-y-3">
+            <div data-lesson-nav-group data-lesson-nav-cols="2" className="md:hidden space-y-3">
               {mergedClassRows.map((row, rowIdx) => {
                 if (row.type === 'event') {
                   const st = eventRowStyle(row.event.type);
@@ -1196,8 +1279,8 @@ function LessonPlanPage() {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <input type="text" value={item.title} onChange={e => handleClassEditChange(index, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="수업 제목 입력" />
-                      <input type="text" value={item.memo} onChange={e => handleClassEditChange(index, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="교사용 메모 입력" />
+                      <input type="text" data-lesson-nav onKeyDown={handleLessonNavKey} value={item.title} onChange={e => handleClassEditChange(index, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="수업 제목 입력" />
+                      <input type="text" data-lesson-nav onKeyDown={handleLessonNavKey} value={item.memo} onChange={e => handleClassEditChange(index, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="교사용 메모 입력" />
                     </div>
                   </div>
                 );
@@ -1209,7 +1292,7 @@ function LessonPlanPage() {
           </div>
         ) : (
           <>
-            <div className="hidden md:block bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-x-auto">
+            <div data-lesson-nav-group data-lesson-nav-cols="2" className="hidden md:block bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-x-auto">
               <table className="w-full text-left border-collapse min-w-[600px]">
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-sm border-b border-slate-100 dark:border-slate-700">
@@ -1221,16 +1304,23 @@ function LessonPlanPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-slate-700/50">
                   {displayData.map((lesson, index) => (
-                    <tr key={lesson.id} className={`hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors group ${isEditMode ? 'bg-indigo-50/10 dark:bg-indigo-900/10' : ''}`}>
+                    <tr
+                      key={lesson.id}
+                      draggable={dragArmed === index}
+                      onDragStart={e => startRowDrag(e, index)}
+                      onDragOver={e => handleRowDragOver(e, index)}
+                      onDrop={e => handleRowDrop(e, index, reorderLesson)}
+                      onDragEnd={endRowDrag}
+                      className={`hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors group ${isEditMode ? 'bg-indigo-50/10 dark:bg-indigo-900/10' : ''} ${rowDragClass(index)}`}
+                    >
                       <td className="px-6 py-5 font-black text-indigo-600 dark:text-indigo-400 whitespace-nowrap">{index + 1}차시</td>
                       {isEditMode ? (
                         <>
-                          <td className="px-6 py-3"><input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" /></td>
-                          <td className="px-6 py-3"><input type="text" value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="교사용 메모 입력" /></td>
+                          <td className="px-6 py-3"><input type="text" data-lesson-nav onKeyDown={handleLessonNavKey} value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="수업 제목 입력" /></td>
+                          <td className="px-6 py-3"><input type="text" data-lesson-nav onKeyDown={handleLessonNavKey} value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-2.5 rounded-lg text-base md:text-sm bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" placeholder="교사용 메모 입력" /></td>
                           <td className="px-6 py-3 text-center">
                             <div className="flex justify-center items-center gap-1">
-                              <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▲</button>
-                              <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors disabled:opacity-30 disabled:hover:bg-transparent">▼</button>
+                              <span role="button" tabIndex={-1} aria-label="드래그하여 차시 순서 변경" title="드래그하여 순서를 옮기세요" onMouseDown={() => setDragArmed(index)} onMouseUp={endRowDrag} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-md transition-colors cursor-grab active:cursor-grabbing select-none">⠿</span>
                               <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors font-bold">×</button>
                             </div>
                           </td>
@@ -1241,8 +1331,7 @@ function LessonPlanPage() {
                           <td className="px-6 py-5 text-gray-500 dark:text-gray-400 text-sm">{lesson.memo}</td>
                           <td className="px-6 py-5 text-center">
                             <div className="flex justify-center items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button aria-label="위로 이동" onClick={() => moveLesson(index, -1)} disabled={index === 0} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30">▲</button>
-                              <button aria-label="아래로 이동" onClick={() => moveLesson(index, 1)} disabled={index === displayData.length - 1} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md disabled:opacity-30">▼</button>
+                              <span role="button" tabIndex={-1} aria-label="드래그하여 차시 순서 변경" title="드래그하여 순서를 옮기세요" onMouseDown={() => setDragArmed(index)} onMouseUp={endRowDrag} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-md transition-colors cursor-grab active:cursor-grabbing select-none">⠿</span>
                               <button aria-label="차시 삭제" onClick={() => deleteLesson(lesson.id)} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md font-bold">×</button>
                             </div>
                           </td>
@@ -1257,7 +1346,7 @@ function LessonPlanPage() {
               </table>
             </div>
 
-            <div className="md:hidden space-y-3">
+            <div data-lesson-nav-group data-lesson-nav-cols="2" className="md:hidden space-y-3">
               {displayData.map((lesson, index) => (
                 <div key={lesson.id} className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm">
                   <div className="flex justify-between items-start gap-3 mb-3">
@@ -1270,8 +1359,8 @@ function LessonPlanPage() {
                   </div>
                   {isEditMode ? (
                     <div className="space-y-2">
-                      <input type="text" value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="수업 제목 입력" />
-                      <input type="text" value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="교사용 메모 입력" />
+                      <input type="text" data-lesson-nav onKeyDown={handleLessonNavKey} value={lesson.title} onChange={e => handleEditChange(lesson.id, 'title', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="수업 제목 입력" />
+                      <input type="text" data-lesson-nav onKeyDown={handleLessonNavKey} value={lesson.memo} onChange={e => handleEditChange(lesson.id, 'memo', e.target.value)} className="w-full border border-indigo-200 dark:border-indigo-800/60 p-3 rounded-xl text-base bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="교사용 메모 입력" />
                     </div>
                   ) : (
                     <div>
@@ -3236,6 +3325,11 @@ function HolidayModal({ onClose, onAdd, classes, initial }: HolidayModalProps) {
   const [slots, setSlots] = useState<HolidaySlotRow[]>(initial?.slots && initial.slots.length > 0 ? initial.slots : [{ periods: [], classIds: [] }]);
   const [error, setError] = useState('');
 
+  const handleStartDateChange = (value: string) => {
+    setStartDate(value);
+    setEndDate(prev => (!prev || prev < value) ? value : prev);
+  };
+
   const toggleSlotPeriod = (slotIdx: number, p: number) => {
     setSlots(prev => prev.map((s, i) => i !== slotIdx ? s : {
       ...s,
@@ -3254,9 +3348,9 @@ function HolidayModal({ onClose, onAdd, classes, initial }: HolidayModalProps) {
   const removeSlot = (idx: number) => setSlots(prev => prev.filter((_, i) => i !== idx));
 
   const handleAdd = () => {
-    if (!startDate || !endDate || !newTitle.trim()) { setError('날짜와 내용을 입력하세요.'); return; }
+    if (!startDate || !newTitle.trim()) { setError('날짜와 내용을 입력하세요.'); return; }
     const start = dateUtils.parseDate(startDate);
-    const end = dateUtils.parseDate(endDate);
+    const end = dateUtils.parseDate(endDate || startDate); // 종료일 미입력 시 시작일 하루만
     if (start > end) { setError('종료일이 시작일보다 빠를 수 없습니다.'); return; }
     if (mode === 'slots' && slots.some(s => s.periods.length === 0)) { setError('각 슬롯에 교시를 1개 이상 선택하세요.'); return; }
 
@@ -3299,10 +3393,10 @@ function HolidayModal({ onClose, onAdd, classes, initial }: HolidayModalProps) {
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">시작일</label>
-              <input type="date" aria-label="시작일" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input type="date" aria-label="시작일" value={startDate} onChange={e => handleStartDateChange(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
             <div className="flex-1">
-              <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">종료일</label>
+              <label className="block font-bold text-gray-700 dark:text-gray-300 mb-1.5">종료일 <span className="text-[10px] font-medium text-slate-400">(비우면 시작일과 동일)</span></label>
               <input type="date" aria-label="종료일" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-600 p-3 rounded-xl bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
