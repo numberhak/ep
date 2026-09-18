@@ -531,6 +531,8 @@ interface AppContextType {
   pendingScoreRef: React.MutableRefObject<{ classId: string; classScore: number; groupScores: number[]; logs: ScoreLog[]; } | null>;
   goToPage: (page: 'manage' | 'plan' | 'settings' | 'records' | 'tasks', params?: any) => void;
   pageParams: any;
+  recordsSelectedClassId: string;
+  setRecordsSelectedClassId: (id: string) => void;
 }
 const AppContext = createContext<AppContextType | null>(null);
 
@@ -2098,10 +2100,14 @@ function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onU
 }
 
 function RecordsPage() {
-  const { classes, updateClasses, setClassesOptimistic, records, updateRecords, scoreLogs, updateScoreLogs, setScoreLogsOptimistic, pendingScoreRef, pageParams } = useContext(AppContext)!;
+  const { classes, updateClasses, setClassesOptimistic, records, updateRecords, scoreLogs, updateScoreLogs, setScoreLogsOptimistic, pendingScoreRef, pageParams, recordsSelectedClassId, setRecordsSelectedClassId } = useContext(AppContext)!;
   const addToast = useContext(ToastContext);
 
-  const [selectedClassId, setSelectedClassId] = useState<string>(pageParams?.classId || (classes[0]?.classId || ''));
+  // 선택된 학급 ID는 App 레벨 상태(recordsSelectedClassId)를 사용한다.
+  // 레이아웃 분기(사이드바 ↔ 하단탭)로 인해 이 컴포넌트가 리마운트되어도
+  // (예: 패드 절전모드 복귀 시 리사이즈 이벤트로 레이아웃이 바뀌는 경우) 선택이 초기화되지 않도록 하기 위함.
+  const selectedClassId = recordsSelectedClassId || pageParams?.classId || classes[0]?.classId || '';
+  const setSelectedClassId = setRecordsSelectedClassId;
   const [newDate, setNewDate] = useState(dateUtils.formatDate(new Date()));
   const [newContent, setNewContent] = useState(() => { try { return sessionStorage.getItem('record_draft') || ''; } catch { return ''; } });
   const [newImportant, setNewImportant] = useState(false);
@@ -4073,6 +4079,9 @@ export default function App() {
 
   const [activePage, setActivePage] = useState<'manage' | 'plan' | 'settings' | 'records' | 'tasks'>('manage');
   const [pageParams, setPageParams] = useState<any>(null);
+  // 학급기록장에서 선택된 학급 — 화면 분할/절전모드 복귀 시 레이아웃(사이드바 ↔ 하단탭)이
+  // 바뀌면서 RecordsPage가 리마운트되어도 선택 상태가 유지되도록 App 레벨에서 보관한다.
+  const [recordsSelectedClassId, setRecordsSelectedClassId] = useState<string>('');
 
   const [lessonsState, setLessonsState] = useState<Lesson[]>(() => loadFromLocal('lessons', MOCK_LESSONS));
   const [lessonPlansState, setLessonPlansState] = useState<LessonPlan[]>(() => loadFromLocal('lessonPlans', [{ ...DEFAULT_LESSON_PLANS[0], lessons: loadFromLocal('lessons', MOCK_LESSONS) }]));
@@ -4319,6 +4328,7 @@ export default function App() {
     pendingScoreRef: appPendingScoreRef,
     goToPage: (page, params) => { setActivePage(page); setPageParams(params); },
     pageParams,
+    recordsSelectedClassId, setRecordsSelectedClassId,
   };
 
   // ==========================================
