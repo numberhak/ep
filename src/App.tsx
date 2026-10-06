@@ -82,8 +82,9 @@ export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan'
 export interface SemesterSchedule { semester: 1 | 2; startDate: string; weeklySlots: WeeklySlot[]; }
 // 지난 모둠 회차 보관본 (읽기 전용)
 // 새 모둠을 구성하면 그 직전까지의 모둠원·점수가 이 형태로 쌓인다.
-export interface GroupRound { id: string; label: string; startedAt: string; endedAt: string; members: string[][]; scores: number[]; }
-export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; semesterSchedules?: SemesterSchedule[]; classScore?: number; groupScores?: number[]; groupMembers?: string[][]; groupHighlights?: { g: number; m: number }[]; groupStartedAt?: string; groupHistory?: GroupRound[]; }
+// endedAtTime(HH:MM)은 점수 이력을 회차별로 가를 때 쓰는 전환 시각. 예전 데이터에는 없을 수 있다.
+export interface GroupRound { id: string; label: string; startedAt: string; endedAt: string; endedAtTime?: string; members: string[][]; scores: number[]; }
+export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; semesterSchedules?: SemesterSchedule[]; classScore?: number; groupScores?: number[]; groupMembers?: string[][]; groupHighlights?: { g: number; m: number }[]; groupStartedAt?: string; groupStartedTime?: string; groupHistory?: GroupRound[]; }
 export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; periods?: number[]; classIds?: string[]; }
 export interface ClassEvent { id: string; classId: string; date: string; period: number; title: string; type: 'exception' | 'extra' | 'replace'; }
 export interface ClassRecord { id: string; classId: string; date: string; content: string; important?: boolean; }
@@ -91,7 +92,8 @@ export interface UserProfile { name: string; subject: string; autoHolidayYears?:
 export interface Task { id: string; title: string; date?: string; completed: boolean; }
 export interface TaskNote { id: string; content: string; color: ClassColor; createdAt: string; }
 
-export interface ScoreLog { id: string; classId: string; date: string; time: string; type: 'class' | 'group'; groupIndex?: number; amount: number; label: string; }
+// roundNo: 이 점수를 매길 당시의 모둠 회차 번호(1부터). 이력을 회차별로 가를 때 쓴다. 예전 기록에는 없다.
+export interface ScoreLog { id: string; classId: string; date: string; time: string; type: 'class' | 'group'; groupIndex?: number; amount: number; label: string; roundNo?: number; }
 
 export interface ScheduledItem {
   date: string; period: number; type: 'lesson' | 'event';
@@ -158,6 +160,7 @@ function createGroupRound(
   scores: number[] | undefined,
   startedAt: string | undefined,
   endedAt: string,
+  endedAtTime: string,
   roundNumber: number,
 ): GroupRound {
   const start = startedAt || endedAt;
@@ -166,11 +169,55 @@ function createGroupRound(
     label: `${roundNumber}차 모둠`,
     startedAt: start,
     endedAt,
+    endedAtTime,
     members: normalizeGroupMembers(members).map(g => g.map(m => (m ?? '').toString())),
     scores: Array.from({ length: GROUP_COUNT }, (_, i) => {
       const v = scores?.[i];
       return typeof v === 'number' && !isNaN(v) ? v : 0;
     }),
+  };
+}
+
+// 점수 이력을 모둠 회차별로 가르기 위한 정렬 키. 전환 시각이 없는 옛 기록은 그날 0시로 본다.
+function groupRoundKey(date: string, time?: string) { return `${date} ${time || '00:00'}`; }
+
+export interface GroupRoundTag { id: string; label: string; period: string; isCurrent: boolean; }
+// 해당 학급의 회차 구분이 의미 있을 때만(지난 회차가 하나라도 있을 때) 판별 함수를 돌려준다.
+function makeGroupRoundResolver(cls?: ClassSchedule): ((date: string, time?: string, roundNo?: number) => GroupRoundTag) | null {
+  const rounds = cls?.groupHistory ?? [];
+  if (!cls || rounds.length === 0) return null;
+  const bounds = rounds.map(r => ({
+    id: r.id,
+    label: r.label,
+    period: `${r.startedAt} ~ ${r.endedAt}`,
+    startedAt: r.startedAt,
+    endedAt: r.endedAt,
+    endKey: groupRoundKey(r.endedAt, r.endedAtTime),
+  }));
+  const tag = (b: typeof bounds[number]): GroupRoundTag => ({ id: b.id, label: b.label, period: b.period, isCurrent: false });
+  const current: GroupRoundTag = {
+    id: 'current',
+    label: `${rounds.length + 1}차 모둠`,
+    period: cls.groupStartedAt ? `${cls.groupStartedAt} ~` : '',
+    isCurrent: true,
+  };
+  const currentStartKey = cls.groupStartedAt ? groupRoundKey(cls.groupStartedAt, cls.groupStartedTime) : null;
+  return (date, time, roundNo) => {
+    // 1) 기록에 회차 번호가 남아 있으면 그대로 쓴다 (같은 날·같은 분에 모둠을 바꿔도 정확).
+    if (typeof roundNo === 'number') {
+      if (roundNo > bounds.length) return current;
+      const b = bounds[roundNo - 1];
+      // 중간 회차를 삭제해 번호가 밀렸을 수 있으므로 날짜 범위로 한 번 검증한다.
+      if (b && date >= b.startedAt && date <= b.endedAt) return tag(b);
+    }
+    // 2) 회차 번호가 없는 옛 기록은 전환 시각으로 가른다.
+    const hit = bounds.find(b => groupRoundKey(date, time) <= b.endKey);
+    if (hit) return tag(hit);
+    // 회차 기록을 지운 뒤 남은 옛 이력이 현재 회차로 섞이지 않게 한 번 더 거른다.
+    if (currentStartKey && groupRoundKey(date, time) <= currentStartKey) {
+      return { id: 'past', label: '지난 모둠', period: '', isCurrent: false };
+    }
+    return current;
   };
 }
 
@@ -1709,6 +1756,8 @@ function ScoreLogTab({
   };
 
   const colorStyle = activeClass ? COLOR_MAP[activeClass.color] : COLOR_MAP['blue'];
+  // 모둠을 한 번이라도 새로 구성한 학급이면 이력에 회차 구분선을 넣는다.
+  const resolveRound = useMemo(() => makeGroupRoundResolver(activeClass), [activeClass]);
 
   return (
     <div className="flex-1 flex flex-col p-5 md:p-6">
@@ -1780,12 +1829,30 @@ function ScoreLogTab({
 
       {/* 이력 목록 */}
       <div className="flex-1 space-y-2 md:pr-1">
-        {classScoreLogs.length > 0 ? classScoreLogs.map(log => {
+        {classScoreLogs.length > 0 ? classScoreLogs.map((log, idx) => {
           const isPlus = log.amount > 0;
           const isSelected = selectedIds.has(log.id);
+          // 회차가 바뀌는 지점마다 구분선을 끼워 넣는다 (목록은 최신순).
+          const round = resolveRound?.(log.date, log.time, log.roundNo);
+          const prev = idx > 0 ? classScoreLogs[idx - 1] : null;
+          const prevRound = prev ? resolveRound?.(prev.date, prev.time, prev.roundNo) : null;
+          const showDivider = !!round && (idx === 0 || prevRound?.id !== round.id);
           return (
+            <React.Fragment key={log.id}>
+            {showDivider && round && (
+              <div className={`flex items-center gap-2 pb-0.5 ${idx === 0 ? '' : 'pt-3'}`}>
+                <span className={`shrink-0 text-[10px] font-black px-2 py-1 rounded-lg ${
+                  round.isCurrent
+                    ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                }`}>
+                  {round.isCurrent ? `👥 ${round.label} · 진행 중` : `🗂️ ${round.label} · 마감`}
+                </span>
+                {round.period && <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 truncate">{round.period}</span>}
+                <span className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+              </div>
+            )}
             <div
-              key={log.id}
               onClick={() => isSelecting && toggleSelect(log.id)}
               className={`flex items-center gap-3 px-4 py-3 rounded-xl border shadow-sm transition-colors ${
                 isSelecting ? 'cursor-pointer' : ''
@@ -1834,6 +1901,7 @@ function ScoreLogTab({
                 </button>
               )}
             </div>
+            </React.Fragment>
           );
         }) : (
           <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 pt-12">
@@ -2394,6 +2462,7 @@ function RecordsPage() {
       groupIndex: index,
       amount,
       label,
+      roundNo: (activeClass.groupHistory?.length ?? 0) + 1, // 지금 진행 중인 모둠 회차
     };
     pendingScoreRef.current.logs.unshift(newLog);
 
@@ -2517,13 +2586,17 @@ function RecordsPage() {
     const finalGroupScores = (pendingIsThisClass ? pending!.groupScores : (base.groupScores ?? [])).map(round2);
     const finalClassScore = pendingIsThisClass ? round2(pending!.classScore) : (base.classScore ?? 0);
 
-    const today = dateUtils.formatDate(new Date());
+    const now = new Date();
+    const today = dateUtils.formatDate(now);
+    // 전환 시각까지 남겨야 같은 날 찍힌 점수 이력을 옛 회차/새 회차로 정확히 가를 수 있다.
+    const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const history = base.groupHistory ?? [];
     const archived = createGroupRound(
       base.groupMembers,
       finalGroupScores,
       base.groupStartedAt || base.startDate,
       today,
+      nowTime,
       history.length + 1,
     );
 
@@ -2538,6 +2611,7 @@ function RecordsPage() {
         groupScores: [0, 0, 0, 0, 0],
         groupHighlights: [],
         groupStartedAt: today,
+        groupStartedTime: nowTime,
       };
     });
 
