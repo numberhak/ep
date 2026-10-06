@@ -80,7 +80,10 @@ export interface LessonPlan { id: string; name: string; semester?: 1 | 2; startD
 export interface WeeklySlot { dayOfWeek: number; period: number; }
 export type ClassColor = 'blue' | 'green' | 'purple' | 'rose' | 'amber' | 'cyan';
 export interface SemesterSchedule { semester: 1 | 2; startDate: string; weeklySlots: WeeklySlot[]; }
-export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; semesterSchedules?: SemesterSchedule[]; classScore?: number; groupScores?: number[]; groupMembers?: string[][]; groupHighlights?: { g: number; m: number }[]; }
+// 지난 모둠 회차 보관본 (읽기 전용)
+// 새 모둠을 구성하면 그 직전까지의 모둠원·점수가 이 형태로 쌓인다.
+export interface GroupRound { id: string; label: string; startedAt: string; endedAt: string; members: string[][]; scores: number[]; }
+export interface ClassSchedule { classId: string; className: string; startDate: string; color: ClassColor; weeklySlots: WeeklySlot[]; semesterSchedules?: SemesterSchedule[]; classScore?: number; groupScores?: number[]; groupMembers?: string[][]; groupHighlights?: { g: number; m: number }[]; groupStartedAt?: string; groupHistory?: GroupRound[]; }
 export interface Holiday { id?: string; date: string; title: string; isHoliday?: boolean; periods?: number[]; classIds?: string[]; }
 export interface ClassEvent { id: string; classId: string; date: string; period: number; title: string; type: 'exception' | 'extra' | 'replace'; }
 export interface ClassRecord { id: string; classId: string; date: string; content: string; important?: boolean; }
@@ -149,24 +152,61 @@ function normalizeGroupMembers(src?: string[][]): string[][] {
   return out;
 }
 
+// 지난 모둠 회차 보관본을 만든다. 새 모둠을 구성하기 직전의 모둠원·점수를 그대로 굳힌다.
+function createGroupRound(
+  members: string[][] | undefined,
+  scores: number[] | undefined,
+  startedAt: string | undefined,
+  endedAt: string,
+  roundNumber: number,
+): GroupRound {
+  const start = startedAt || endedAt;
+  return {
+    id: `gr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    label: `${roundNumber}차 모둠`,
+    startedAt: start,
+    endedAt,
+    members: normalizeGroupMembers(members).map(g => g.map(m => (m ?? '').toString())),
+    scores: Array.from({ length: GROUP_COUNT }, (_, i) => {
+      const v = scores?.[i];
+      return typeof v === 'number' && !isNaN(v) ? v : 0;
+    }),
+  };
+}
+
 // Firestore는 중첩 배열(배열 안의 배열)을 저장하지 못한다.
 // groupMembers(string[][])는 저장 시 맵 배열({ m: string[] }[])로 인코딩하고,
 // 읽어올 때 다시 string[][] 로 디코딩해 우회한다. 로컬(localStorage)에는 원본을 그대로 둔다.
+// groupHistory 안의 members 도 같은 규칙을 적용한다.
+function encodeMemberGrid(grid: any): any {
+  return Array.isArray(grid) ? grid.map((g: any) => ({ m: Array.isArray(g) ? g : [] })) : grid;
+}
+// 인코딩된 형태({ m: [...] }[])만 되돌린다. 이미 string[][] 이거나 없으면 그대로 둔다.
+function decodeMemberGrid(grid: any): any {
+  if (Array.isArray(grid) && grid.length > 0 && grid[0] && !Array.isArray(grid[0]) && typeof grid[0] === 'object') {
+    return grid.map((x: any) => (Array.isArray(x?.m) ? x.m : []));
+  }
+  return grid;
+}
 function encodeClassesForFirestore(classes: any[]): any[] {
-  return (classes || []).map(c =>
-    Array.isArray(c?.groupMembers)
-      ? { ...c, groupMembers: c.groupMembers.map((g: string[]) => ({ m: Array.isArray(g) ? g : [] })) }
-      : c
-  );
+  return (classes || []).map(c => {
+    let next = c;
+    if (Array.isArray(c?.groupMembers)) next = { ...next, groupMembers: encodeMemberGrid(c.groupMembers) };
+    if (Array.isArray(c?.groupHistory)) {
+      next = { ...next, groupHistory: c.groupHistory.map((r: any) => ({ ...r, members: encodeMemberGrid(r?.members) })) };
+    }
+    return next;
+  });
 }
 function decodeClassesFromFirestore(raw: any[]): any[] {
   return (raw || []).map(c => {
+    let next = c;
     const gm = c?.groupMembers;
-    // 인코딩된 형태({ m: [...] }[])만 되돌린다. 이미 string[][] 이거나 없으면 그대로 둔다.
-    if (Array.isArray(gm) && gm.length > 0 && gm[0] && !Array.isArray(gm[0]) && typeof gm[0] === 'object') {
-      return { ...c, groupMembers: gm.map((x: any) => (Array.isArray(x?.m) ? x.m : [])) };
+    if (Array.isArray(gm)) next = { ...next, groupMembers: decodeMemberGrid(gm) };
+    if (Array.isArray(c?.groupHistory)) {
+      next = { ...next, groupHistory: c.groupHistory.map((r: any) => ({ ...r, members: decodeMemberGrid(r?.members) })) };
     }
-    return c;
+    return next;
   });
 }
 
@@ -1897,13 +1937,17 @@ interface GroupBoardProps {
   onSaveMembers: (members: string[][]) => Promise<void>;
   onToggleHighlight: (groupIdx: number, memberIdx: number) => void;
   onSwapGroups: (a: number, b: number) => void;
+  roundNumber: number;
+  startedAt?: string;
+  onStartNewRound: () => Promise<void>;
 }
-function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onUpdateScore, onSaveMembers, onToggleHighlight, onSwapGroups }: GroupBoardProps) {
+function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onUpdateScore, onSaveMembers, onToggleHighlight, onSwapGroups, roundNumber, startedAt, onStartNewRound }: GroupBoardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<string[][]>(() => normalizeGroupMembers(members));
   const [swapA, setSwapA] = useState(0);
   const [swapB, setSwapB] = useState(1);
   const [confirmSwap, setConfirmSwap] = useState(false);
+  const [confirmNewRound, setConfirmNewRound] = useState(false);
 
   // 학급을 바꾸면 편집 상태를 정리하고 새 학급 데이터로 초기화
   // (편집 중이 아닐 땐 members 를 그대로 렌더링하므로 별도 동기화가 필요 없다)
@@ -1945,7 +1989,10 @@ function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onU
     <section className="shrink-0 bg-white/60 dark:bg-slate-800/60 backdrop-blur-sm rounded-3xl border border-white dark:border-slate-700 p-4 md:p-5 shadow-sm">
       <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
         <div>
-          <h3 className="text-sm font-black text-slate-700 dark:text-slate-200">👥 모둠 보드</h3>
+          <h3 className="text-sm font-black text-slate-700 dark:text-slate-200 flex items-center gap-2">
+            👥 모둠 보드
+            <span className="px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 text-[10px] font-black">{roundNumber}차 모둠{startedAt ? ` · ${startedAt} ~` : ''}</span>
+          </h3>
           <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 mt-0.5">
             {isEditing ? '이름을 입력하고 ▲▼로 모둠 번호를 바꿀 수 있습니다.' : '이름을 클릭하면 최대 2명까지 강조 표시할 수 있습니다.'}
           </p>
@@ -1957,10 +2004,27 @@ function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onU
               <button onClick={handleSave} className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 dark:bg-indigo-500 text-white hover:bg-indigo-700 shadow-sm transition-colors">저장</button>
             </>
           ) : (
-            <button onClick={() => { setDraft(normalizeGroupMembers(members)); setIsEditing(true); }} className="px-4 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">모둠원 편집</button>
+            <>
+              <button onClick={() => setConfirmNewRound(true)} className="px-4 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors">🔄 새 모둠 구성</button>
+              <button onClick={() => { setDraft(normalizeGroupMembers(members)); setIsEditing(true); }} className="px-4 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">모둠원 편집</button>
+            </>
           )}
         </div>
       </div>
+
+      {confirmNewRound && (
+        <ConfirmModal
+          message={`지금 ${roundNumber}차 모둠을 마감하고 새 모둠을 구성할까요?\n\n현재 모둠원과 모둠 점수는 '지난 모둠 기록'에 그대로 보관되며, 보관된 뒤에는 읽기 전용이 됩니다.\n보드는 빈 명단·0점으로 새로 시작합니다.`}
+          confirmLabel="새 모둠 구성"
+          onConfirm={async () => {
+            setConfirmNewRound(false);
+            setIsEditing(false);
+            await onStartNewRound();
+            setDraft(normalizeGroupMembers([]));
+          }}
+          onCancel={() => setConfirmNewRound(false)}
+        />
+      )}
 
       {isEditing && (
         <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap mb-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 sm:px-3 py-2">
@@ -2095,6 +2159,158 @@ function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onU
           ))}
         </div>
       </div>
+    </section>
+  );
+}
+
+// ==========================================
+// 지난 모둠 기록 (읽기 전용)
+// 새 모둠을 구성하면서 마감된 회차들을 보관한다.
+// 점수 조절·모둠원 편집은 불가능하고, 회차 이름만 고쳐 쓸 수 있다.
+// ==========================================
+function GroupHistoryPanel({ classId, rounds, colorStyle, onRenameRound, onDeleteRound }: {
+  classId: string;
+  rounds: GroupRound[];
+  colorStyle: any;
+  onRenameRound: (roundId: string, label: string) => Promise<void>;
+  onDeleteRound: (roundId: string) => Promise<void>;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [openRoundId, setOpenRoundId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [labelDraft, setLabelDraft] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // 학급을 바꾸면 펼침 상태를 정리한다.
+  useEffect(() => { setIsOpen(false); setOpenRoundId(null); setEditingId(null); setConfirmDeleteId(null); }, [classId]);
+
+  const gridTemplate = { gridTemplateColumns: `repeat(${GROUP_COUNT}, minmax(0, 1fr))` };
+  // 최근 회차가 위로 오도록 뒤집어 보여준다.
+  const ordered = [...rounds].reverse();
+
+  if (rounds.length === 0) return null;
+
+  const submitLabel = async (round: GroupRound) => {
+    const next = labelDraft.trim();
+    setEditingId(null);
+    if (!next || next === round.label) return;
+    await onRenameRound(round.id, next);
+  };
+
+  return (
+    <section className="shrink-0 bg-white/60 dark:bg-slate-800/60 backdrop-blur-sm rounded-3xl border border-white dark:border-slate-700 shadow-sm overflow-hidden">
+      {confirmDeleteId && (
+        <ConfirmModal
+          message={'이 회차의 모둠 기록을 삭제할까요?\n삭제하면 되돌릴 수 없습니다.'}
+          onConfirm={async () => { const id = confirmDeleteId; setConfirmDeleteId(null); await onDeleteRound(id); }}
+          onCancel={() => setConfirmDeleteId(null)}
+        />
+      )}
+
+      <button
+        type="button"
+        onClick={() => setIsOpen(v => !v)}
+        aria-expanded={isOpen}
+        className="w-full flex items-center justify-between gap-2 px-4 md:px-5 py-4 text-left hover:bg-white/50 dark:hover:bg-slate-700/30 transition-colors"
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-black text-slate-700 dark:text-slate-200">🗂️ 지난 모둠 기록</span>
+          <span className="px-2 py-0.5 rounded-full bg-slate-200/70 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-[10px] font-black shrink-0">{rounds.length}회차</span>
+          <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 truncate hidden sm:inline">읽기 전용 · 점수와 모둠원은 수정할 수 없습니다</span>
+        </span>
+        <span className={`text-slate-400 text-xs shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`}>▼</span>
+      </button>
+
+      {isOpen && (
+        <div className="px-4 md:px-5 pb-4 md:pb-5 flex flex-col gap-2">
+          {ordered.map(round => {
+            const expanded = openRoundId === round.id;
+            const view = normalizeGroupMembers(round.members);
+            const rowCount = Math.max(MIN_GROUP_MEMBERS, ...view.map(g => g.length));
+            return (
+              <div key={round.id} className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/40 overflow-hidden">
+                <div className="flex items-center gap-2 px-3 py-2.5">
+                  {editingId === round.id ? (
+                    <input
+                      type="text"
+                      aria-label="회차 이름"
+                      value={labelDraft}
+                      autoFocus
+                      onChange={e => setLabelDraft(e.target.value)}
+                      onBlur={() => submitLabel(round)}
+                      onKeyDown={e => { if (e.key === 'Enter') submitLabel(round); if (e.key === 'Escape') setEditingId(null); }}
+                      className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-800/60 text-xs font-bold bg-white dark:bg-slate-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setOpenRoundId(expanded ? null : round.id)}
+                      aria-expanded={expanded}
+                      className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                    >
+                      <span className={`text-xs font-black ${colorStyle.text} truncate`}>{round.label}</span>
+                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 truncate">{round.startedAt} ~ {round.endedAt}</span>
+                      <span className={`ml-auto text-slate-400 text-[10px] shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}>▼</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`${round.label} 이름 수정`}
+                    onClick={() => { setLabelDraft(round.label); setEditingId(round.id); }}
+                    className="shrink-0 px-2 py-1 rounded-lg text-[10px] font-bold text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+                  >이름 수정</button>
+                  <button
+                    type="button"
+                    aria-label={`${round.label} 삭제`}
+                    onClick={() => setConfirmDeleteId(round.id)}
+                    className="shrink-0 px-2 py-1 rounded-lg text-[10px] font-bold text-rose-500 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
+                  >삭제</button>
+                </div>
+
+                {expanded && (
+                  <div className="px-2.5 sm:px-3 pb-3 border-t border-slate-100 dark:border-slate-700/60 pt-3">
+                    {/* 모둠 점수 — 보관본이라 버튼 없이 숫자만 */}
+                    <div className="grid gap-1.5 sm:gap-2" style={gridTemplate}>
+                      {Array.from({ length: GROUP_COUNT }).map((_, gi) => {
+                        const score = round.scores[gi] ?? 0;
+                        const display = Number.isInteger(score) ? score : parseFloat(score.toFixed(2));
+                        return (
+                          <div key={gi} className="bg-white/90 dark:bg-slate-800/90 p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col gap-1 min-w-0">
+                            <div className={`text-[10px] sm:text-xs font-black ${colorStyle.text} opacity-80 truncate`}>👥 {gi + 1}모둠</div>
+                            <div className="text-base sm:text-xl font-black text-gray-800 dark:text-white leading-none">{display}<span className="text-[10px] sm:text-xs ml-0.5">점</span></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* 모둠원 — 같은 번호가 같은 행 */}
+                    {Array.from({ length: rowCount }).map((_, ri) => (
+                      <div key={ri} className="grid gap-1.5 sm:gap-2 mt-1.5 sm:mt-2" style={gridTemplate}>
+                        {Array.from({ length: GROUP_COUNT }).map((_, gi) => {
+                          const group = view[gi];
+                          if (ri >= group.length) {
+                            return <div key={gi} className="rounded-xl border border-dashed border-slate-200 dark:border-slate-700/60 min-h-[2.25rem]" />;
+                          }
+                          const name = group[ri];
+                          return (
+                            <div key={gi} className="flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/50 min-w-0">
+                              <span className="truncate text-[11px] sm:text-xs md:text-sm font-bold text-slate-600 dark:text-slate-300">
+                                {name || <span className="text-slate-300 dark:text-slate-600 font-normal">—</span>}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+
+                    <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mt-2.5">🔒 마감된 회차입니다. 점수와 모둠원은 수정할 수 없습니다.</p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
@@ -2283,6 +2499,87 @@ function RecordsPage() {
     }
   };
 
+  // 새 모둠 구성: 지금까지의 모둠원·모둠 점수를 회차로 보관하고 보드를 빈 상태로 되돌린다.
+  // 보관된 회차는 읽기 전용이라 이후에는 점수·모둠원을 바꿀 수 없다.
+  const handleStartNewRound = async () => {
+    if (!activeClass) return;
+
+    // 디바운스 대기 중인 점수가 있으면 먼저 확정한다.
+    // (그대로 두면 1.2초 뒤 타이머가 옛 점수를 새 모둠 보드에 다시 써버린다.)
+    if (scoreDebounceTimer.current) { clearTimeout(scoreDebounceTimer.current); scoreDebounceTimer.current = null; }
+    const pending = pendingScoreRef.current;
+    const pendingIsThisClass = !!pending && pending.classId === activeClass.classId;
+    pendingScoreRef.current = null;
+
+    const latestClasses = latestClassesRef.current;
+    const base = latestClasses.find(c => c.classId === activeClass.classId) ?? activeClass;
+    const round2 = (v: number) => Math.round((isNaN(v) ? 0 : v) * 100) / 100;
+    const finalGroupScores = (pendingIsThisClass ? pending!.groupScores : (base.groupScores ?? [])).map(round2);
+    const finalClassScore = pendingIsThisClass ? round2(pending!.classScore) : (base.classScore ?? 0);
+
+    const today = dateUtils.formatDate(new Date());
+    const history = base.groupHistory ?? [];
+    const archived = createGroupRound(
+      base.groupMembers,
+      finalGroupScores,
+      base.groupStartedAt || base.startDate,
+      today,
+      history.length + 1,
+    );
+
+    const nextClasses = latestClasses.map(c => {
+      const normalized = { ...c, classScore: c.classScore ?? 0, groupScores: (c.groupScores ?? [0, 0, 0, 0, 0]).map(round2) };
+      if (c.classId !== activeClass.classId) return normalized;
+      return {
+        ...normalized,
+        classScore: finalClassScore,          // 학급 전체 점수는 그대로 이어간다
+        groupHistory: [...history, archived],
+        groupMembers: normalizeGroupMembers([]), // 빈 명단으로 새 출발
+        groupScores: [0, 0, 0, 0, 0],
+        groupHighlights: [],
+        groupStartedAt: today,
+      };
+    });
+
+    try {
+      await updateClasses(nextClasses);
+      // 아직 저장되지 않은 점수 이력이 있으면 함께 확정한다.
+      if (pending && pending.logs.length > 0) {
+        const cutoff = dateUtils.formatDate(dateUtils.addDays(new Date(), -14));
+        const fresh = latestScoreLogsRef.current.filter(l => l.date >= cutoff);
+        await updateScoreLogs([...pending.logs, ...fresh.filter(l => !pending.logs.find(pl => pl.id === l.id))]);
+      }
+      addToast(`${archived.label}을(를) 기록으로 보관하고 새 모둠을 시작했습니다.`, 'success');
+    } catch {
+      addToast('새 모둠 구성에 실패했습니다.');
+    }
+  };
+
+  const handleRenameRound = async (roundId: string, label: string) => {
+    if (!activeClass) return;
+    try {
+      await updateClasses(classes.map(c => c.classId !== activeClass.classId ? c : {
+        ...c,
+        groupHistory: (c.groupHistory ?? []).map(r => (r.id === roundId ? { ...r, label } : r)),
+      }));
+    } catch {
+      addToast('회차 이름 저장에 실패했습니다.');
+    }
+  };
+
+  const handleDeleteRound = async (roundId: string) => {
+    if (!activeClass) return;
+    try {
+      await updateClasses(classes.map(c => c.classId !== activeClass.classId ? c : {
+        ...c,
+        groupHistory: (c.groupHistory ?? []).filter(r => r.id !== roundId),
+      }));
+      addToast('지난 모둠 기록을 삭제했습니다.', 'success');
+    } catch {
+      addToast('삭제에 실패했습니다.');
+    }
+  };
+
   const handleExportCSV = () => {
     if (!activeClass) return;
     const filteredRecords = classRecords.filter(r => r.date >= exportStartDate && r.date <= exportEndDate);
@@ -2333,6 +2630,18 @@ function RecordsPage() {
             onSaveMembers={handleSaveGroupMembers}
             onToggleHighlight={handleToggleHighlight}
             onSwapGroups={handleSwapGroups}
+            roundNumber={(activeClass.groupHistory?.length ?? 0) + 1}
+            startedAt={activeClass.groupStartedAt}
+            onStartNewRound={handleStartNewRound}
+          />
+
+          {/* 지난 모둠 기록 (읽기 전용) */}
+          <GroupHistoryPanel
+            classId={activeClass.classId}
+            rounds={activeClass.groupHistory ?? []}
+            colorStyle={COLOR_MAP[activeClass.color]}
+            onRenameRound={handleRenameRound}
+            onDeleteRound={handleDeleteRound}
           />
 
           {/* 중요 기록 핀 영역 */}
