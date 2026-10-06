@@ -674,6 +674,67 @@ const IconChecklist  = () => <svg className="w-5 h-5" fill="none" stroke="curren
 const IconLeft       = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>;
 const IconRight      = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>;
 
+// 모둠원 편집 중 방향키·Enter로 이름 칸 사이를 옮겨 다닌다.
+// 모둠마다 인원이 달라 DOM 순서로는 계산할 수 없어 좌표(data-gm-g / data-gm-r)로 찾는다.
+//  ↑↓     같은 모둠의 윗번호 / 아랫번호
+//  Enter  아랫번호, 모둠의 마지막 번호에서는 다음 모둠 1번으로
+//  ←→     커서가 글자 끝에 닿았을 때만 옆 모둠의 같은 번호로 (글자 사이 이동은 그대로)
+const handleGroupMemberNavKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const key = e.key;
+  if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Enter') return;
+  const composing = e.nativeEvent.isComposing;
+  // 한글 조합 중의 Enter는 글자를 확정하는 키라 이동에 쓰지 않는다.
+  if (composing && key === 'Enter') return;
+
+  const current = e.currentTarget;
+  const board = current.closest('[data-gm-board]');
+  if (!board) return;
+  const g = Number(current.getAttribute('data-gm-g'));
+  const r = Number(current.getAttribute('data-gm-r'));
+  if (isNaN(g) || isNaN(r)) return;
+
+  const at = (gi: number, ri: number) =>
+    gi < 0 || ri < 0 ? null : board.querySelector<HTMLInputElement>(`input[data-gm-g="${gi}"][data-gm-r="${ri}"]`);
+  // 옆 모둠이 더 짧으면 그 모둠의 마지막 번호로 붙인다.
+  const nearest = (gi: number, ri: number) => {
+    if (gi < 0) return null;
+    const col = board.querySelectorAll<HTMLInputElement>(`input[data-gm-g="${gi}"]`);
+    if (col.length === 0) return null;
+    return at(gi, Math.min(ri, col.length - 1));
+  };
+
+  const caret = current.selectionStart ?? 0;
+  const hasSelection = (current.selectionEnd ?? 0) !== caret;
+  let target: HTMLInputElement | null = null;
+  let caretAt: 'keep' | 'start' | 'end' = 'keep';
+
+  if (key === 'ArrowUp') target = at(g, r - 1);
+  else if (key === 'ArrowDown') target = at(g, r + 1);
+  else if (key === 'Enter') target = at(g, r + 1) || at(g + 1, 0);
+  else if (key === 'ArrowLeft') {
+    if (hasSelection || caret > 0) return;
+    target = nearest(g - 1, r);
+    caretAt = 'end';
+  } else {
+    if (hasSelection || caret < current.value.length) return;
+    target = nearest(g + 1, r);
+    caretAt = 'start';
+  }
+  if (!target) return;
+
+  e.preventDefault();
+  const next = target;
+  const move = () => {
+    next.focus();
+    const pos = caretAt === 'start' ? 0 : caretAt === 'end' ? next.value.length : Math.min(caret, next.value.length);
+    next.setSelectionRange(pos, pos);
+  };
+  // 한글은 마지막 글자가 조합 중으로 남아 있다. 그 상태에서 바로 focus를 옮기면
+  // 방향키가 조합을 끝내는 데만 쓰이고 이동은 무시되므로, 조합이 확정된 다음 tick에 옮긴다.
+  if (composing) setTimeout(move, 0);
+  else move();
+};
+
 // 수업 제목 / 비고 입력칸에서 위·아래 방향키로 같은 열의 윗줄·아랫줄로 이동한다.
 // 같은 그룹(data-lesson-nav-group) 안의 입력칸을 DOM 순서대로 모아 열 개수만큼 건너뛴다.
 const handleLessonNavKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -2062,7 +2123,7 @@ function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onU
             <span className="px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 text-[10px] font-black">{roundNumber}차 모둠{startedAt ? ` · ${startedAt} ~` : ''}</span>
           </h3>
           <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 mt-0.5">
-            {isEditing ? '이름을 입력하고 ▲▼로 모둠 번호를 바꿀 수 있습니다.' : '이름을 클릭하면 최대 2명까지 강조 표시할 수 있습니다.'}
+            {isEditing ? '↑↓ · Enter로 칸을 옮겨 다니며 입력하세요. ▲▼ 버튼은 모둠 번호를 바꿉니다.' : '이름을 클릭하면 최대 2명까지 강조 표시할 수 있습니다.'}
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -2139,7 +2200,7 @@ function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onU
       )}
 
       <div>
-        <div>
+        <div data-gm-board>
           {/* 모둠 점수 행 */}
           <div className="grid gap-1.5 sm:gap-2" style={gridTemplate}>
             {Array.from({ length: GROUP_COUNT }).map((_, gi) => (
@@ -2211,6 +2272,9 @@ function GroupBoard({ classId, members, groupScores, colorStyle, highlights, onU
                     <input
                       type="text"
                       aria-label={`${gi + 1}모둠 ${ri + 1}번 이름`}
+                      data-gm-g={gi}
+                      data-gm-r={ri}
+                      onKeyDown={handleGroupMemberNavKey}
                       value={name}
                       onChange={e => handleNameChange(gi, ri, e.target.value)}
                       placeholder={`${ri + 1}번`}
